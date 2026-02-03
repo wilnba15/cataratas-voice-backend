@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Cataratas Voice - Demo</title>
+  <style>
+    body{font-family:system-ui,Arial;max-width:860px;margin:36px auto;padding:0 16px;background:#0b1220;color:#e8eefc}
+    .card{background:#121a2b;border:1px solid #1f2a44;border-radius:14px;padding:16px;margin-top:14px}
+    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+    button{padding:12px 14px;border-radius:12px;border:1px solid #2a3a63;background:#1a2750;color:#e8eefc;cursor:pointer}
+    button:disabled{opacity:.5;cursor:not-allowed}
+    input{padding:10px 12px;border-radius:10px;border:1px solid #2a3a63;background:#0f1730;color:#e8eefc;width:160px}
+    .pill{display:inline-block;padding:6px 10px;border-radius:999px;border:1px solid #2a3a63;background:#0f1730;font-size:12px}
+    pre{white-space:pre-wrap;background:#0f1730;border:1px solid #2a3a63;border-radius:12px;padding:12px;margin:0}
+    audio{width:100%;margin-top:10px}
+    small{opacity:.85}
+  </style>
+</head>
+<body>
+  <h2>🎙️ Cataratas Voice — Demo Web Local</h2>
+
+  <div class="card">
+    <div class="row">
+      <span class="pill" id="status">Estado: listo</span>
+      <span class="pill" id="codec">Codec: -</span>
+    </div>
+
+    <div class="row" style="margin-top:10px">
+      <label><b>Session ID:</b></label>
+      <input id="sessionId" type="number" min="1" placeholder="(crea sesión)" />
+      <button id="btnStartSession">➕ Crear sesión</button>
+      <button id="btnStart" disabled>🎤 Grabar</button>
+      <button id="btnStop" disabled>⏹️ Detener</button>
+    </div>
+
+<div class="row" style="margin-top:10px">
+  <label><b>Micrófono:</b></label>
+  <select id="micSelect" style="padding:10px 12px;border-radius:10px;border:1px solid #2a3a63;background:#0f1730;color:#e8eefc;min-width:320px"></select>
+</div>
+
+
+    <small>Tip: usa audífonos para evitar que el micrófono capture el audio del reproductor.</small>
+  </div>
+
+  <div class="card">
+    <h3>📝 Transcripción</h3>
+    <pre id="transcript">—</pre>
+    <small>🎧 Audio grabado (para verificar qué capturó el mic):</small>
+<audio id="recorded" controls></audio>
+
+  </div>
+
+  <div class="card">
+    <h3>🤖 Respuesta del asistente</h3>
+    <pre id="prompt">—</pre>
+    <audio id="player" controls></audio>
+  </div>
+
+<script>
+  const API_BASE = "http://127.0.0.1:8001";
+  const $ = (id) => document.getElementById(id);
+  const setStatus = (t) => $("status").textContent = "Estado: " + t;
+
+  const player = $("player");
+  const recorded = $("recorded");
+  const micSelect = $("micSelect");
+
+  let recorder, chunks = [], stream;
+  let isSpeaking = false;
+  let selectedMicId = null;
+
+  function setButtons({ canRecord, recording }) {
+    $("btnStart").disabled = !canRecord || recording || isSpeaking;
+    $("btnStop").disabled = !recording;
+  }
+
+  player.onplay = () => { isSpeaking = true; setButtons({ canRecord:true, recording:false }); };
+  player.onended = () => { isSpeaking = false; setButtons({ canRecord:true, recording:false }); };
+  player.onpause = () => { isSpeaking = false; setButtons({ canRecord:true, recording:false }); };
+
+  async function ttsAndPlay(text){
+    const r = await fetch(`${API_BASE}/voice/speak`, {
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ text })
+    });
+    if(!r.ok) throw new Error(await r.text());
+    const audioBlob = await r.blob();
+    const url = URL.createObjectURL(audioBlob);
+    player.src = url;
+    await player.play();
+  }
+
+  async function loadMics(){
+    // Pedimos permiso 1 vez para que Chrome revele labels
+    const tmp = await navigator.mediaDevices.getUserMedia({ audio:true });
+    tmp.getTracks().forEach(t => t.stop());
+
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const mics = devices.filter(d => d.kind === "audioinput");
+
+    micSelect.innerHTML = "";
+    mics.forEach((m, i) => {
+      const opt = document.createElement("option");
+      opt.value = m.deviceId;
+      opt.textContent = m.label || `Micrófono ${i+1}`;
+      micSelect.appendChild(opt);
+    });
+
+    selectedMicId = micSelect.value || null;
+
+    micSelect.onchange = () => {
+      selectedMicId = micSelect.value;
+      setStatus("mic seleccionado ✅");
+    };
+
+    setStatus(`mics detectados: ${mics.length} ✅`);
+  }
+
+  async function createSession(){
+    setStatus("creando sesión...");
+    setButtons({ canRecord:false, recording:false });
+
+    const r = await fetch(`${API_BASE}/voice/start`, { method:"POST" });
+    if(!r.ok){
+      setStatus("error creando sesión");
+      return;
+    }
+
+    const data = await r.json();
+    $("sessionId").value = data.session_id;
+    $("prompt").textContent = data.prompt || "—";
+    $("transcript").textContent = "—";
+    recorded.src = "";
+
+    setStatus("sesión creada ✅");
+    setButtons({ canRecord:true, recording:false });
+
+    try{
+      await ttsAndPlay(data.prompt || "Hola, ¿cómo puedo ayudarte?");
+    }catch(e){
+      console.error(e);
+      setStatus("sesión creada (TTS falló)");
+    }
+  }
+
+  async function startRecording(){
+    const sessionId = $("sessionId").value;
+
+    if(!sessionId){
+      setStatus("primero crea una sesión");
+      return;
+    }
+    if(isSpeaking){
+      setStatus("Espera a que el bot termine de hablar 🎧");
+      return;
+    }
+    if(!selectedMicId){
+      setStatus("elige un micrófono primero");
+      return;
+    }
+
+    // Pausar audios y esperar
+    try { player.pause(); player.currentTime = 0; } catch(e){}
+    try { recorded.pause(); recorded.currentTime = 0; } catch(e){}
+    await new Promise(r => setTimeout(r, 600));
+
+    chunks = [];
+    setButtons({ canRecord:true, recording:true });
+
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        deviceId: { exact: selectedMicId },
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true
+      }
+    });
+
+    const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+      ? "audio/webm;codecs=opus"
+      : "audio/webm";
+
+    $("codec").textContent = "Codec: " + mime;
+
+    recorder = new MediaRecorder(stream, { mimeType: mime });
+    recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+
+    recorder.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop());
+
+      const blob = new Blob(chunks, { type: mime });
+      console.log("Audio size:", blob.size, "Mic:", selectedMicId);
+
+      if(blob.size === 0){
+        setStatus("No se grabó audio 😅");
+        setButtons({ canRecord:true, recording:false });
+        return;
+      }
+
+      // ✅ Reproducir lo que realmente se grabó (para confirmar)
+      recorded.src = URL.createObjectURL(blob);
+
+      setStatus(`enviando audio... (size=${blob.size})`);
+
+      const form = new FormData();
+      form.append("session_id", sessionId);
+      form.append("file", blob, "grabacion.webm");
+
+      try{
+        const r1 = await fetch(`${API_BASE}/voice/chat-audio-json`, { method:"POST", body: form });
+        if(!r1.ok) throw new Error(await r1.text());
+
+        const data = await r1.json();
+        $("transcript").textContent = data.transcript || "—";
+        $("prompt").textContent = data.prompt || "—";
+
+        setStatus("generando voz...");
+        await ttsAndPlay(data.prompt || "—");
+        setStatus("listo ✅");
+      }catch(e){
+        console.error(e);
+        setStatus("error: " + (e.message || e));
+      }finally{
+        setButtons({ canRecord:true, recording:false });
+      }
+    };
+
+    recorder.start();
+    setStatus("grabando... 🎙️");
+  }
+
+  function stopRecording(){
+    if(!recorder) return;
+    setStatus("procesando...");
+    recorder.stop();
+    setButtons({ canRecord:true, recording:false });
+  }
+
+  $("btnStart").onclick = startRecording;
+  $("btnStop").onclick = stopRecording;
+  $("btnStartSession").onclick = createSession;
+
+  (async () => {
+    setButtons({ canRecord:false, recording:false });
+    try{
+      await loadMics();
+      setButtons({ canRecord:true, recording:false });
+    }catch(e){
+      console.error(e);
+      setStatus("permiso de micrófono requerido");
+    }
+  })();
+</script>
+
+
+</body>
+</html>
