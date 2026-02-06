@@ -30,16 +30,23 @@ def test_slots(
     slug = get_clinic_slug(request, x_clinic_slug, x_forwarded_host)
     clinic = require_clinic(db, slug)
 
-    slots = get_next_slots(
+    # 🔥 Para pruebas: fuerza 09:00 del día siguiente (evita que te dé 0 por estar fuera de horario)
+    from_dt = (datetime.now() + timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
+
+    res = get_next_slots(
         db,
-        clinic_id=clinic.id,  # 🔥 CLAVE para multi-clínica
+        clinic_id=clinic.id,
         provider_id=settings.DEFAULT_PROVIDER_ID,
         type_id=settings.DEFAULT_APPT_TYPE_ID,
-        from_dt=datetime.now(),
+        from_dt=from_dt,
         limit=3
     )
 
+    # ✅ Soporta ambas salidas: lista o {"value":[], "Count":0}
+    slots = res["value"] if isinstance(res, dict) and "value" in res else res
+
     return [{"start": s[0].isoformat(), "end": s[1].isoformat()} for s in slots]
+
 
 
 # ====== NUEVO: Flujo conversacional por texto (sin Twilio aún) ======
@@ -575,3 +582,27 @@ async def chat_audio_json(
             os.remove(tmp_path)
         except Exception:
             pass
+
+
+from sqlalchemy import text
+
+@router.get("/debug/clinic")
+def debug_clinic(
+    request: Request,
+    db: Session = Depends(get_db),
+    x_clinic_slug: str | None = Header(default=None, alias="X-Clinic-Slug"),
+    x_forwarded_host: str | None = Header(default=None, alias="X-Forwarded-Host"),
+):
+    slug = get_clinic_slug(request, x_clinic_slug, x_forwarded_host)
+    clinic = require_clinic(db, slug)
+
+    # OJO: cambia nombres de tabla si en tu DB se llaman distinto
+    rules_count = db.execute(text("SELECT COUNT(*) FROM availability_rules WHERE clinic_id = :cid"), {"cid": clinic.id}).scalar()
+
+    return {
+        "slug": slug,
+        "clinic_id": clinic.id,
+        "provider_id_used": settings.DEFAULT_PROVIDER_ID,
+        "type_id_used": settings.DEFAULT_APPT_TYPE_ID,
+        "availability_rules_count": int(rules_count or 0),
+    }
