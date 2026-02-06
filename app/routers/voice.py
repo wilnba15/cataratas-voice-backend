@@ -205,7 +205,7 @@ def handle_message(db, clinic_id, session_id, text, provider_id: int, type_id: i
             limit=200
         )
 
-            day_slots = [s for s in all_slots if date_start <= s[0] < date_end]
+        day_slots = [s for s in all_slots if date_start <= s[0] < date_end]
 
         if not day_slots:
             return {
@@ -559,7 +559,7 @@ async def chat_audio_json(
 
         result = handle_message(db, clinic.id, session_id, user_text)
 
-        request: Request,
+        request: Request
         x_clinic_slug: str | None = Header(default=None, alias="X-Clinic-Slug"),
         x_forwarded_host: str | None = Header(default=None, alias="X-Forwarded-Host"),
 
