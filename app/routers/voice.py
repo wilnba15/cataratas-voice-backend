@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Request, HTTPException, UploadFile, File, Body, Form
+from fastapi import APIRouter, Depends, Request, HTTPException, UploadFile, File, Body, Form, Header
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
@@ -12,21 +12,29 @@ from app.db import get_db
 from app.config import settings
 from app.services.availability import get_next_slots
 from app import crud, schemas
+from app.tenancy import get_clinic_slug, require_clinic
 
 
 router = APIRouter(prefix="/voice", tags=["voice"])
 
 
 # Endpoint de prueba de disponibilidad (SIN Twilio todavía)
+
 @router.get("/test-slots")
-def test_slots(db: Session = Depends(get_db)):
-    provider_id = settings.DEFAULT_PROVIDER_ID
-    type_id = settings.DEFAULT_APPT_TYPE_ID
+def test_slots(
+    request: Request,
+    db: Session = Depends(get_db),
+    x_clinic_slug: str | None = Header(default=None, alias="X-Clinic-Slug"),
+    x_forwarded_host: str | None = Header(default=None, alias="X-Forwarded-Host"),
+):
+    slug = get_clinic_slug(request, x_clinic_slug, x_forwarded_host)
+    clinic = require_clinic(db, slug)
 
     slots = get_next_slots(
         db,
-        provider_id=provider_id,
-        type_id=type_id,
+        clinic_id=clinic.id,  # 🔥 CLAVE para multi-clínica
+        provider_id=clinic.default_provider_id,
+        type_id=clinic.default_appt_type_id,
         from_dt=datetime.now(),
         limit=3
     )
@@ -37,9 +45,18 @@ def test_slots(db: Session = Depends(get_db)):
 # ====== NUEVO: Flujo conversacional por texto (sin Twilio aún) ======
 
 @router.post("/start", response_model=schemas.VoiceStartResponse)
-def start_voice(db: Session = Depends(get_db)):
-    sess = crud.create_voice_session(db)
+def start_voice(
+    request: Request,
+    db: Session = Depends(get_db),
+    x_clinic_slug: str | None = Header(default=None, alias="X-Clinic-Slug"),
+    x_forwarded_host: str | None = Header(default=None, alias="X-Forwarded-Host"),
+):
+    slug = get_clinic_slug(request, x_clinic_slug, x_forwarded_host)
+    clinic = require_clinic(db, slug)
+
+    sess = crud.create_voice_session(db, clinic_id=clinic.id)
     return {"session_id": sess.id, "prompt": "Hola 👋 ¿Cuál es tu nombre completo?"}
+
 
 WEEKDAYS_ES = {
     "lunes": 0,
@@ -106,11 +123,13 @@ def normalize_es(text: str) -> str:
 
 
 
-def handle_message(db: Session, session_id: int, text: str):
+def handle_message(db, clinic_id, session_id, text, provider_id: int, type_id: int):
 
-    sess = crud.get_voice_session(db, session_id)
+
+    sess = crud.get_voice_session(db, session_id, clinic_id=clinic_id)
     if not sess:
         raise HTTPException(status_code=404, detail="Sesión no encontrada")
+
 
     text = (text or "").strip()
     if not text:
@@ -168,15 +187,17 @@ def handle_message(db: Session, session_id: int, text: str):
 
         data["date"] = date_iso
 
-        provider_id = settings.DEFAULT_PROVIDER_ID
-        type_id = settings.DEFAULT_APPT_TYPE_ID
+        # provider_id = settings.DEFAULT_PROVIDER_ID
+        # type_id = settings.DEFAULT_APPT_TYPE_ID
 
         date_start = datetime.fromisoformat(data["date"] + "T00:00:00")
         date_end = date_start + timedelta(days=1)
 
         # Pedimos slots desde el día elegido (así NO depende del limit desde hoy)
+
         all_slots = get_next_slots(
             db,
+            clinic_id=clinic_id,
             provider_id=provider_id,
             type_id=type_id,
             from_dt=date_start,
@@ -184,7 +205,7 @@ def handle_message(db: Session, session_id: int, text: str):
             limit=200
         )
 
-        day_slots = [s for s in all_slots if date_start <= s[0] < date_end]
+            day_slots = [s for s in all_slots if date_start <= s[0] < date_end]
 
         if not day_slots:
             return {
@@ -317,17 +338,21 @@ def handle_message(db: Session, session_id: int, text: str):
 
         patient = crud.get_or_create_patient(
             db,
+            clinic_id=clinic_id,
             full_name=data["full_name"],
             phone=data["phone"]
         )
 
+
         crud.create_appointment(
             db=db,
+            clinic_id=clinic_id,
             patient_id=patient.id,
             provider_id=settings.DEFAULT_PROVIDER_ID,
             type_id=settings.DEFAULT_APPT_TYPE_ID,
             start_time=start_dt
         )
+
 
         crud.update_voice_session(db, sess, "END", data)
 
@@ -348,10 +373,27 @@ def handle_message(db: Session, session_id: int, text: str):
     }
 
 
-
 @router.post("/message", response_model=schemas.VoiceMessageResponse)
-def voice_message(payload: schemas.VoiceMessageRequest, db: Session = Depends(get_db)):
-    return handle_message(db, payload.session_id, payload.text)
+def voice_message(
+    request: Request,
+    payload: schemas.VoiceMessageRequest,
+    db: Session = Depends(get_db),
+    x_clinic_slug: str | None = Header(default=None, alias="X-Clinic-Slug"),
+    x_forwarded_host: str | None = Header(default=None, alias="X-Forwarded-Host"),
+):
+    slug = get_clinic_slug(request, x_clinic_slug, x_forwarded_host)
+    clinic = require_clinic(db, slug)
+
+    return handle_message(
+    db,
+    clinic.id,
+    payload.session_id,
+    payload.text,
+    provider_id=clinic.default_provider_id,
+    type_id=clinic.default_appt_type_id,
+    )
+
+
 
 
 # (Más adelante aquí pondremos el webhook de Twilio para llamadas reales)
@@ -420,10 +462,14 @@ async def speak(payload: dict = Body(...)):
 
 @router.post("/chat-audio")
 async def chat_audio(
+    request: Request,
     session_id: int = Form(...),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
+    x_clinic_slug: str | None = Header(default=None, alias="X-Clinic-Slug"),
+    x_forwarded_host: str | None = Header(default=None, alias="X-Forwarded-Host"),
 ):
+
     """Recibe audio, lo transcribe, pasa por el flujo conversacional y devuelve mp3."""
     if not file.filename:
         raise HTTPException(status_code=400, detail="No se recibió archivo")
@@ -446,7 +492,14 @@ async def chat_audio(
         texto_usuario = transcript.text
 
         # 2) Flujo conversacional (reutiliza la misma lógica de /message)
-        result = handle_message(db, session_id, texto_usuario)
+
+        slug = get_clinic_slug(request, x_clinic_slug, x_forwarded_host)
+        
+        clinic = require_clinic(db, slug)
+
+        result = handle_message(db, clinic.id, session_id, texto_usuario)
+
+
         prompt = result["prompt"]
 
         # 3) TTS del prompt
@@ -471,10 +524,14 @@ async def chat_audio(
 
 @router.post("/chat-audio-json")
 async def chat_audio_json(
+    request: Request,
     session_id: int = Form(...),
     file: UploadFile = File(...),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    x_clinic_slug: str | None = Header(default=None, alias="X-Clinic-Slug"),
+    x_forwarded_host: str | None = Header(default=None, alias="X-Forwarded-Host"),
 ):
+
     if not file.filename:
         raise HTTPException(status_code=400, detail="No se recibió archivo")
 
@@ -497,7 +554,14 @@ async def chat_audio_json(
         user_text = (transcript.text or "").strip()
 
         # 2) Flujo conversacional
-        result = handle_message(db, session_id, user_text)
+        slug = get_clinic_slug(request, x_clinic_slug, x_forwarded_host)
+        clinic = require_clinic(db, slug)
+
+        result = handle_message(db, clinic.id, session_id, user_text)
+
+        request: Request,
+        x_clinic_slug: str | None = Header(default=None, alias="X-Clinic-Slug"),
+        x_forwarded_host: str | None = Header(default=None, alias="X-Forwarded-Host"),
 
         return {
             "session_id": result.get("session_id", session_id),
