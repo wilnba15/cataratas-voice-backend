@@ -33,8 +33,8 @@ def test_slots(
     slots = get_next_slots(
         db,
         clinic_id=clinic.id,  # 🔥 CLAVE para multi-clínica
-        provider_id=clinic.default_provider_id,
-        type_id=clinic.default_appt_type_id,
+        provider_id=settings.DEFAULT_PROVIDER_ID,
+        type_id=settings.DEFAULT_APPT_TYPE_ID,
         from_dt=datetime.now(),
         limit=3
     )
