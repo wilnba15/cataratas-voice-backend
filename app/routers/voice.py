@@ -14,6 +14,9 @@ from app.services.availability import get_next_slots
 from app import crud, schemas
 from app.tenancy import get_clinic_slug, require_clinic
 
+from sqlalchemy import asc
+from app import models  # o donde importes Provider / AppointmentType
+
 
 router = APIRouter(prefix="/voice", tags=["voice"])
 
@@ -391,15 +394,36 @@ def voice_message(
     slug = get_clinic_slug(request, x_clinic_slug, x_forwarded_host)
     clinic = require_clinic(db, slug)
 
-    return handle_message(
-    db,
-    clinic.id,
-    payload.session_id,
-    payload.text,
-    provider_id=(clinic.default_provider_id or settings.DEFAULT_PROVIDER_ID),
-    type_id=(clinic.default_appt_type_id or settings.DEFAULT_APPT_TYPE_ID),
+    
 
+    # defaults por clínica (sin columnas en Clinic)
+    prov = (
+        db.query(models.Provider)
+        .filter(models.Provider.clinic_id == clinic.id)
+        .order_by(asc(models.Provider.id))
+        .first()
     )
+
+    appt = (
+        db.query(models.AppointmentType)
+        .filter(models.AppointmentType.clinic_id == clinic.id)
+        .order_by(asc(models.AppointmentType.id))
+        .first()
+    )
+
+    provider_id = (prov.id if prov else None) or settings.DEFAULT_PROVIDER_ID
+    type_id = (appt.id if appt else None) or settings.DEFAULT_APPT_TYPE_ID
+
+
+    return handle_message(
+        db,
+        clinic.id,
+        payload.session_id,
+        payload.text,
+        provider_id=provider_id,
+        type_id=type_id,
+    )
+
 
 
 
