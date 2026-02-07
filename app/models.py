@@ -42,8 +42,13 @@ class Provider(Base):
 class AppointmentType(Base):
     __tablename__ = "appointment_types"
     id = Column(Integer, primary_key=True, index=True)
-    code = Column(String(20), nullable=False, unique=True, index=True) # EVAL, PREOP, etc.
+    clinic_id = Column(Integer, ForeignKey("clinics.id"), nullable=False, index=True)
+
+    code = Column(String(20), nullable=False)
     duration_minutes = Column(Integer, nullable=False)
+
+    clinic = relationship("Clinic")
+
 
 class AvailabilityRule(Base):
     __tablename__ = "availability_rules"
