@@ -396,8 +396,8 @@ def voice_message(
     clinic.id,
     payload.session_id,
     payload.text,
-    provider_id=clinic.default_provider_id,
-    type_id=clinic.default_appt_type_id,
+    provider_id=settings.DEFAULT_PROVIDER_ID,
+    type_id=settings.DEFAULT_APPT_TYPE_ID,
     )
 
 
