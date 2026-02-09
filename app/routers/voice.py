@@ -36,14 +36,32 @@ def test_slots(
     # 🔥 Para pruebas: fuerza 09:00 del día siguiente (evita que te dé 0 por estar fuera de horario)
     from_dt = (datetime.now() + timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
 
+    prov = (
+    db.query(models.Provider)
+    .filter(models.Provider.clinic_id == clinic.id)
+    .order_by(asc(models.Provider.id))
+    .first()
+    )
+
+    appt = (
+        db.query(models.AppointmentType)
+        .filter(models.AppointmentType.clinic_id == clinic.id)
+        .order_by(asc(models.AppointmentType.id))
+        .first()
+    )
+
+    provider_id = (prov.id if prov else None) or settings.DEFAULT_PROVIDER_ID
+    type_id = (appt.id if appt else None) or settings.DEFAULT_APPT_TYPE_ID
+
     res = get_next_slots(
         db,
         clinic_id=clinic.id,
-        provider_id=settings.DEFAULT_PROVIDER_ID,
-        type_id=settings.DEFAULT_APPT_TYPE_ID,
+        provider_id=provider_id,
+        type_id=type_id,
         from_dt=from_dt,
         limit=3
     )
+
 
     # ✅ Soporta ambas salidas: lista o {"value":[], "Count":0}
     slots = res["value"] if isinstance(res, dict) and "value" in res else res
