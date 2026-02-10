@@ -42,3 +42,6 @@ def debug_seed():
         }
     finally:
         db.close()
+
+from app.twilio_voice import router as twilio_router
+app.include_router(twilio_router)
