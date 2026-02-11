@@ -7,7 +7,7 @@ from app.db import SessionLocal
 from app.tenancy import require_clinic
 from app import models
 from app.config import settings
-from app.routers.voice import handle_message  # motor real
+from app.routers.voice import handle_message
 
 router = APIRouter()
 
@@ -74,6 +74,7 @@ async def twilio_process(
             .order_by(asc(models.AppointmentType.id))
             .first()
         )
+
         provider_id = (prov.id if prov else None) or settings.DEFAULT_PROVIDER_ID
         type_id = (appt.id if appt else None) or settings.DEFAULT_APPT_TYPE_ID
 
@@ -105,4 +106,5 @@ async def twilio_process(
     )
     _say(gather, prompt)
     vr.append(gather)
+
     return Response(content=str(vr), media_type="application/xml")
