@@ -160,7 +160,45 @@ def normalize_es(text: str) -> str:
 
 
 
-def handle_message(db, clinic_id, session_id, text, provider_id: int, type_id: int):
+def parse_yes_no(text: str) -> bool | None:
+    """Detecta sí/no en frases (tolerante a 'sí por favor', 'ok dale', etc.)."""
+    norm = normalize_es(text)
+
+    YES = {"si", "s", "claro", "ok", "okay", "acepto", "confirmo", "de acuerdo", "dale", "afirmativo"}
+    NO  = {"no", "n", "cancelar", "cancela", "negativo"}
+
+    for y in YES:
+        if y in norm:
+            return True
+    for n in NO:
+        if n in norm:
+            return False
+    return None
+
+
+def get_defaults_for_clinic(db: Session, clinic_id: int) -> tuple[int, int]:
+    """Devuelve (provider_id, type_id) por clínica (primeros registros); fallback a settings."""
+    prov = (
+        db.query(models.Provider)
+        .filter(models.Provider.clinic_id == clinic_id)
+        .order_by(asc(models.Provider.id))
+        .first()
+    )
+
+    appt = (
+        db.query(models.AppointmentType)
+        .filter(models.AppointmentType.clinic_id == clinic_id)
+        .order_by(asc(models.AppointmentType.id))
+        .first()
+    )
+
+    provider_id = (prov.id if prov else None) or settings.DEFAULT_PROVIDER_ID
+    type_id = (appt.id if appt else None) or settings.DEFAULT_APPT_TYPE_ID
+    return provider_id, type_id
+
+
+
+def handle_message(db, clinic_id, session_id, text, provider_id: int | None = None, type_id: int | None = None):
 
 
     sess = crud.get_voice_session(db, session_id, clinic_id=clinic_id)
@@ -177,6 +215,10 @@ def handle_message(db, clinic_id, session_id, text, provider_id: int, type_id: i
         }
 
     data = crud.session_data(sess)
+
+    # defaults por clínica (para llamadas desde audio/Twilio también)
+    if provider_id is None or type_id is None:
+        provider_id, type_id = get_defaults_for_clinic(db, clinic_id)
 
     # ====== 1) NOMBRE (con validación) ======
     if sess.state == "ASK_NAME":
@@ -308,74 +350,105 @@ def handle_message(db, clinic_id, session_id, text, provider_id: int, type_id: i
             "done": False
         }
 
-
-
     # ====== 5) DOCTOR (por ahora default) ======
     if sess.state == "ASK_DOCTOR":
-        norm = normalize_es(text)
-
-        def parse_yes_no(text: str) -> bool | None:
-            norm = normalize_es(text)
-
-            YES = {"si", "s", "claro", "ok", "okay", "acepto", "confirmo", "de acuerdo", "dale"}
-            NO  = {"no", "n", "cancelar", "cancela", "negativo"}
-
-            # ✅ acepta frases: "si por favor", "claro que si", "ok dale", etc.
-            for y in YES:
-                if y in norm:
-                    return True
-            for n in NO:
-                if n in norm:
-                    return False
-
-            return None
-
-
-        YES = {"si", "s", "claro", "ok", "okay", "acepto", "confirmo", "de acuerdo", "dale"}
-        NO = {"no", "n", "cancelar", "cancela", "negativo"}
-
-        if norm in YES:
-            # Por ahora usamos el doctor default siempre.
-            data["doctor"] = settings.DEFAULT_PROVIDER_ID
-            crud.update_voice_session(db, sess, "CONFIRM", data)
-
+        yn = parse_yes_no(text)
+        if yn is None:
             return {
                 "session_id": sess.id,
-                "prompt": (
-                    "Voy a agendar:"
-                    f"Paciente: {data.get('full_name')}"
-                    f"Teléfono: {data.get('phone')}"
-                    f"Fecha: {data.get('date')}"
-                    f"Hora: {data['chosen_slot']['start'][11:16]}"
-                    "¿Confirmas la cita? (sí/no)"
-                ),
+                "prompt": "No entendí 😅 Responde por favor: 'sí' o 'no'.",
                 "done": False
             }
 
-        if norm in NO:
+        if yn is False:
             return {
                 "session_id": sess.id,
                 "prompt": "Por ahora solo tenemos el doctor asignado por defecto. ¿Confirmamos con él? (sí o no)",
                 "done": False
             }
 
+        # Sí => usamos el doctor default de la clínica
+        data["doctor"] = provider_id
+        crud.update_voice_session(db, sess, "CONFIRM", data)
+
+        hora = data.get("chosen_slot", {}).get("start", "")[11:16]
         return {
             "session_id": sess.id,
-            "prompt": "No entendí 😅 Responde por favor: 'sí' o 'no'.",
+            "prompt": (
+                "Voy a agendar tu cita con estos datos:
+"
+                f"Paciente: {data.get('full_name', '')}
+"
+                f"Teléfono: {data.get('phone', '')}
+"
+                f"Fecha: {data.get('date', '')}
+"
+                f"Hora: {hora}
+
+"
+                "¿Confirmas la cita? (sí/no)"
+            ),
             "done": False
         }
 
     # ====== 6) CONFIRMAR + GUARDAR ======
     if sess.state == "CONFIRM":
-        norm = normalize_es(text)
+        yn = parse_yes_no(text)
 
-        YES = {"si", "s", "claro", "ok", "okay", "acepto", "confirmo", "de acuerdo", "dale"}
-        NO = {"no", "n", "cancelar", "cancela", "negativo"}
+        if yn is None:
+            return {
+                "session_id": sess.id,
+                "prompt": "Solo para confirmar 😊 ¿sí o no?",
+                "done": False
+            }
 
-        if norm in NO:
+        if yn is False:
             # Volvemos a pedir fecha:
             crud.update_voice_session(db, sess, "INFO_GENERAL", data)
             return {
+                "session_id": sess.id,
+                "prompt": "De acuerdo. ¿Qué fecha prefieres? (Ej: mañana, lunes, 2026-02-10)",
+                "done": False
+            }
+
+        # ✅ Sí: guardar cita
+        start_dt = datetime.fromisoformat(data["chosen_slot"]["start"])
+
+        patient = crud.get_or_create_patient(
+            db,
+            clinic_id=clinic_id,
+            full_name=data["full_name"],
+            phone=data["phone"]
+        )
+
+        prov_id = int(data.get("doctor") or provider_id)
+        appt_type_id = int(type_id)
+
+        crud.create_appointment(
+            db=db,
+            clinic_id=clinic_id,
+            patient_id=patient.id,
+            provider_id=prov_id,
+            type_id=appt_type_id,
+            start_time=start_dt
+        )
+
+        crud.update_voice_session(db, sess, "END", data)
+
+        return {
+            "session_id": sess.id,
+            "prompt": (
+                "✅ Tu cita quedó agendada correctamente.
+"
+                "Gracias por contactarnos.
+"
+                "¡Que tengas un excelente día! 🙌"
+            ),
+            "done": True
+        }
+
+
+    return {
                 "session_id": sess.id,
                 "prompt": "De acuerdo. ¿Qué fecha prefieres? (Ej: mañana, lunes, 2026-02-10)",
                 "done": False
@@ -634,10 +707,6 @@ async def chat_audio_json(
         clinic = require_clinic(db, slug)
 
         result = handle_message(db, clinic.id, session_id, user_text)
-
-        request: Request
-        x_clinic_slug: str | None = Header(default=None, alias="X-Clinic-Slug"),
-        x_forwarded_host: str | None = Header(default=None, alias="X-Forwarded-Host"),
 
         return {
             "session_id": result.get("session_id", session_id),
