@@ -7,7 +7,44 @@ from app.db import SessionLocal
 from app.tenancy import require_clinic
 from app import models, crud
 from app.config import settings
-from app.routers.voice import handle_message
+from app.routers.voice import 
+
+import re
+
+def normalize_speech(text: str) -> str:
+    t = (text or "").strip()
+    # Caso: 20260212 -> 2026-02-12
+    if re.fullmatch(r"\d{8}", t):
+        y, m, d = t[:4], t[4:6], t[6:8]
+        return f"{y}-{m}-{d}"
+    return t
+
+
+_EMOJI_RE = re.compile(
+    "[" 
+    "\U0001F300-\U0001F5FF"
+    "\U0001F600-\U0001F64F"
+    "\U0001F680-\U0001F6FF"
+    "\U0001F700-\U0001F77F"
+    "\U0001F780-\U0001F7FF"
+    "\U0001F800-\U0001F8FF"
+    "\U0001F900-\U0001F9FF"
+    "\U0001FA00-\U0001FAFF"
+    "\u2600-\u26FF"
+    "\u2700-\u27BF"
+    "]+",
+    flags=re.UNICODE
+)
+
+def clean_tts(text: str) -> str:
+    if not text:
+        return ""
+    t = text
+    t = t.replace("✅", "").replace("❌", "").replace("👉", "").replace("📅", "")
+    t = _EMOJI_RE.sub("", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
 
 router = APIRouter()
 
@@ -53,6 +90,7 @@ async def twilio_voice(
             action=f"/twilio/process?clinic={clinic_slug}&sid={sid}",
             method="POST",
             speech_timeout="auto",
+            timeout=6
         )
         _say(gather, "Hola, soy el asistente de la clínica. ¿Cuál es tu nombre completo?")
         vr.append(gather)
@@ -74,7 +112,8 @@ async def twilio_process(
 ):
     clinic_slug = request.query_params.get("clinic", "demo")
     sid_raw = request.query_params.get("sid", "")
-    text = (SpeechResult or "").strip()
+    text = normalize_speech(SpeechResult)
+
 
     vr = VoiceResponse()
 
@@ -93,6 +132,7 @@ async def twilio_process(
             action=f"/twilio/process?clinic={clinic_slug}&sid={sid}",
             method="POST",
             speech_timeout="auto",
+            timeout=6
         )
         _say(gather, "No te escuché bien. Repite por favor.")
         vr.append(gather)
@@ -117,6 +157,8 @@ async def twilio_process(
         provider_id = (prov.id if prov else None) or settings.DEFAULT_PROVIDER_ID
         type_id = (appt.id if appt else None) or settings.DEFAULT_APPT_TYPE_ID
 
+
+
         # ✅ AQUÍ ya no hay strings: sid es INT
         result = handle_message(
             db,
@@ -134,7 +176,7 @@ async def twilio_process(
     done = bool((result or {}).get("done", False))
 
     if done:
-        _say(vr, prompt)
+        _say(vr, clean_tts(prompt))
         vr.hangup()
         return Response(content=str(vr), media_type="application/xml")
 
@@ -144,8 +186,9 @@ async def twilio_process(
         action=f"/twilio/process?clinic={clinic_slug}&sid={sid}",
         method="POST",
         speech_timeout="auto",
+        timeout=6
     )
-    _say(gather, prompt)
+    _say(gather, clean_tts(prompt))
     vr.append(gather)
     return Response(content=str(vr), media_type="application/xml")
 
