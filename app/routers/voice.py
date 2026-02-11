@@ -101,6 +101,15 @@ WEEKDAYS_ES = {
 def parse_date_es(text: str, now: datetime) -> str | None:
     t = (text or "").strip().lower()
 
+    # ✅ Detecta formato 20260212
+    if re.fullmatch(r"\d{8}", t):
+        try:
+            dt = datetime.strptime(t, "%Y%m%d").date()
+            return dt.isoformat()
+        except ValueError:
+            return None
+
+
     if t == "hoy":
         return now.date().isoformat()
     if t in ("mañana", "manana"):
