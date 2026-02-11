@@ -375,17 +375,11 @@ def handle_message(db, clinic_id, session_id, text, provider_id: int | None = No
         return {
             "session_id": sess.id,
             "prompt": (
-                "Voy a agendar tu cita con estos datos:
-"
-                f"Paciente: {data.get('full_name', '')}
-"
-                f"Teléfono: {data.get('phone', '')}
-"
-                f"Fecha: {data.get('date', '')}
-"
-                f"Hora: {hora}
-
-"
+                "Voy a agendar tu cita con estos datos:"
+                f"Paciente: {data.get('full_name', '')}"
+                f"Teléfono: {data.get('phone', '')}"
+                f"Fecha: {data.get('date', '')}"
+                f"Hora: {hora}"
                 "¿Confirmas la cita? (sí/no)"
             ),
             "done": False
