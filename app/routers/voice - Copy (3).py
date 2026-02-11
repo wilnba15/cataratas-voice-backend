@@ -304,7 +304,7 @@ def handle_message(db, clinic_id, session_id, text, provider_id: int, type_id: i
 
         return {
             "session_id": sess.id,
-            "prompt": "¿Deseas atenderte con el doctor asignado por defecto? (sí o no)",
+            "prompt": "¿Deseas atenderte con el doctor asignado por defecto? (sí/no)",
             "done": False
         }
 
@@ -313,23 +313,6 @@ def handle_message(db, clinic_id, session_id, text, provider_id: int, type_id: i
     # ====== 5) DOCTOR (por ahora default) ======
     if sess.state == "ASK_DOCTOR":
         norm = normalize_es(text)
-
-        def parse_yes_no(text: str) -> bool | None:
-            norm = normalize_es(text)
-
-            YES = {"si", "s", "claro", "ok", "okay", "acepto", "confirmo", "de acuerdo", "dale"}
-            NO  = {"no", "n", "cancelar", "cancela", "negativo"}
-
-            # ✅ acepta frases: "si por favor", "claro que si", "ok dale", etc.
-            for y in YES:
-                if y in norm:
-                    return True
-            for n in NO:
-                if n in norm:
-                    return False
-
-            return None
-
 
         YES = {"si", "s", "claro", "ok", "okay", "acepto", "confirmo", "de acuerdo", "dale"}
         NO = {"no", "n", "cancelar", "cancela", "negativo"}
@@ -355,7 +338,7 @@ def handle_message(db, clinic_id, session_id, text, provider_id: int, type_id: i
         if norm in NO:
             return {
                 "session_id": sess.id,
-                "prompt": "Por ahora solo tenemos el doctor asignado por defecto. ¿Confirmamos con él? (sí o no)",
+                "prompt": "Por ahora solo tenemos el doctor asignado por defecto. ¿Confirmamos con él? (sí/no)",
                 "done": False
             }
 
@@ -675,5 +658,3 @@ def debug_clinic(
         "type_id_used": settings.DEFAULT_APPT_TYPE_ID,
         "availability_rules_count": int(rules_count or 0),
     }
-
-# es el propio
