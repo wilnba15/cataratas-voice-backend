@@ -446,12 +446,12 @@ def handle_message(db, clinic_id, session_id, text, provider_id: int | None = No
                 "done": False
             }
 
-        if norm not in YES:
-            return {
+    if norm not in YES:
+        return {
                 "session_id": sess.id,
-                "prompt": "Solo para confirmar 😊 ¿sí o no?",
+                "p rompt": "Solo para confirmar 😊 ¿sí o no?",
                 "done": False
-            }
+        }
 
         start_dt = datetime.fromisoformat(data["chosen_slot"]["start"])
 
