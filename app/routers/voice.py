@@ -249,7 +249,7 @@ def handle_message(db, clinic_id, session_id, text, provider_id: int | None = No
                 "Atendemos de lunes a viernes de 09:00 a 17:00.\n"
                 "La consulta incluye evaluación completa con el especialista.\n\n"
                 "Ahora sí, agendemos tu cita.\n"
-                "¿Para qué fecha deseas la cita? (Ej: mañana, lunes, 2026-02-10)"
+                "¿Para qué fecha deseas la cita? (Ejemplo: mañana o lunes o 2026-02-10)"
             ),
             "done": False
         }
@@ -260,7 +260,7 @@ def handle_message(db, clinic_id, session_id, text, provider_id: int | None = No
         if not date_iso:
             return {
                 "session_id": sess.id,
-                "prompt": "No entendí la fecha 😅. Dime por ejemplo: 'mañana', 'lunes' o '2026-02-10'.",
+                "prompt": "No entendí la fecha 😅. Dime por ejemplo: 'mañana' o 'lunes' o '2026-02-10'.",
                 "done": False
             }
 
@@ -301,7 +301,7 @@ def handle_message(db, clinic_id, session_id, text, provider_id: int | None = No
         opciones_txt = "\n".join([f"{i+1}) {opt['start'][11:16]}" for i, opt in enumerate(data["slot_options"])])
         return {
             "session_id": sess.id,
-            "prompt": f"Estos son los horarios disponibles para {data['date']}:\n{opciones_txt}\nElige el número (1-5).",
+            "prompt": f"Estos son los horarios disponibles para {data['date']}:\n{opciones_txt}\nElige el número del 1 al 5.",
             "done": False
         }
 
@@ -380,7 +380,7 @@ def handle_message(db, clinic_id, session_id, text, provider_id: int | None = No
                 f"Teléfono: {data.get('phone', '')}"
                 f"Fecha: {data.get('date', '')}"
                 f"Hora: {hora}"
-                "¿Confirmas la cita? (sí/no)"
+                "¿Confirmas la cita? (sí o no)"
             ),
             "done": False
         }
