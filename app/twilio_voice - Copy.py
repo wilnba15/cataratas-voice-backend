@@ -49,16 +49,15 @@ def clean_tts(text: str) -> str:
 router = APIRouter()
 
 def _say(node, text: str):
-    node.say(text, language="es-ES", voice="Polly.Conchita")
+    node.say(text, language="es-ES")
 
 def _gather(clinic_slug: str, sid: int):
     return Gather(
-        input="speech dtmf",
+        input="speech",
         language="es-ES",
         action=f"/twilio/process?clinic={clinic_slug}&sid={sid}",
         method="POST",
         speech_timeout="auto",
-        timeout=8,
     )
 
 @router.post("/twilio/voice")
@@ -86,12 +85,12 @@ async def twilio_voice(
         sid = sess.id  # ✅ ESTE ES EL QUE VAMOS A USAR SIEMPRE
 
         gather = Gather(
-            input="speech dtmf",
+            input="speech",
             language="es-ES",
             action=f"/twilio/process?clinic={clinic_slug}&sid={sid}",
             method="POST",
             speech_timeout="auto",
-            timeout=8
+            timeout=6
         )
         _say(gather, "Hola, soy el asistente de la clínica. ¿Cuál es tu nombre completo?")
         vr.append(gather)
@@ -110,12 +109,10 @@ async def twilio_voice(
 async def twilio_process(
     request: Request,
     SpeechResult: str = Form(default=""),
-    Digits: str = Form(default=""),
 ):
     clinic_slug = request.query_params.get("clinic", "demo")
     sid_raw = request.query_params.get("sid", "")
-    raw_input = Digits or SpeechResult
-    text = normalize_speech(raw_input)
+    text = normalize_speech(SpeechResult)
 
 
     vr = VoiceResponse()
@@ -130,17 +127,15 @@ async def twilio_process(
 
     if not text:
         gather = Gather(
-            input="speech dtmf",
+            input="speech",
             language="es-ES",
             action=f"/twilio/process?clinic={clinic_slug}&sid={sid}",
             method="POST",
             speech_timeout="auto",
-            timeout=8
+            timeout=6
         )
         _say(gather, "No te escuché bien. Repite por favor.")
         vr.append(gather)
-        _say(vr, "No te escuché. Intentemos otra vez.")
-        vr.redirect(f"/twilio/voice?clinic={clinic_slug}", method="POST")
         return Response(content=str(vr), media_type="application/xml")
 
     db = SessionLocal()
@@ -165,18 +160,14 @@ async def twilio_process(
 
 
         # ✅ AQUÍ ya no hay strings: sid es INT
-        try:
-            result = handle_message(
-                db,
-                clinic.id,
-                sid,
-                text,
-                provider_id=provider_id,
-                type_id=type_id,
-            )
-        except Exception as e:
-            print("ERROR /twilio/process:", repr(e))
-            result = {"prompt": "Hubo un problema técnico. Intentemos otra vez.", "done": False}
+        result = handle_message(
+            db,
+            clinic.id,
+            sid,
+            text,
+            provider_id=provider_id,
+            type_id=type_id,
+        )
 
     finally:
         db.close()
@@ -190,12 +181,12 @@ async def twilio_process(
         return Response(content=str(vr), media_type="application/xml")
 
     gather = Gather(
-            input="speech dtmf",
+        input="speech",
         language="es-ES",
         action=f"/twilio/process?clinic={clinic_slug}&sid={sid}",
         method="POST",
         speech_timeout="auto",
-        timeout=8
+        timeout=6
     )
     _say(gather, clean_tts(prompt))
     vr.append(gather)

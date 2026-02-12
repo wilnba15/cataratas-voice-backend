@@ -432,52 +432,6 @@ def handle_message(db, clinic_id, session_id, text, provider_id: int | None = No
         return {
             "session_id": sess.id,
             "prompt": (
-                "✅ Tu cita quedó agendada correctamente."
-                "Gracias por contactarnos."
-                "¡Que tengas un excelente día! 🙌"
-            ),
-            "done": True
-        }
-
-
-    return {
-                "session_id": sess.id,
-                "prompt": "De acuerdo. ¿Qué fecha prefieres? (Ej: mañana, lunes, 2026-02-10)",
-                "done": False
-            }
-
-    if norm not in YES:
-        return {
-                "session_id": sess.id,
-                "p rompt": "Solo para confirmar 😊 ¿sí o no?",
-                "done": False
-        }
-
-        start_dt = datetime.fromisoformat(data["chosen_slot"]["start"])
-
-        patient = crud.get_or_create_patient(
-            db,
-            clinic_id=clinic_id,
-            full_name=data["full_name"],
-            phone=data["phone"]
-        )
-
-
-        crud.create_appointment(
-            db=db,
-            clinic_id=clinic_id,
-            patient_id=patient.id,
-            provider_id=settings.DEFAULT_PROVIDER_ID,
-            type_id=settings.DEFAULT_APPT_TYPE_ID,
-            start_time=start_dt
-        )
-
-
-        crud.update_voice_session(db, sess, "END", data)
-
-        return {
-            "session_id": sess.id,
-            "prompt": (
                 "✅ Tu cita quedó agendada correctamente.\n"
                 "Gracias por contactarnos.\n"
                 "¡Que tengas un excelente día! 🙌"
@@ -485,10 +439,20 @@ def handle_message(db, clinic_id, session_id, text, provider_id: int | None = No
             "done": True
         }
 
+
+    # ====== Estado final ======
+    if sess.state == "END":
+        return {
+            "session_id": sess.id,
+            "prompt": "La sesión ya terminó. Si deseas iniciar otra, usa /voice/start",
+            "done": True
+        }
+
+    # Fallback
     return {
         "session_id": sess.id,
-        "prompt": "La sesión ya terminó. Si deseas iniciar otra, usa /voice/start",
-        "done": True
+        "prompt": "No entendí 😅 ¿me repites por favor?",
+        "done": False
     }
 
 
