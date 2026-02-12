@@ -432,10 +432,8 @@ def handle_message(db, clinic_id, session_id, text, provider_id: int | None = No
         return {
             "session_id": sess.id,
             "prompt": (
-                "✅ Tu cita quedó agendada correctamente.
-"
-                "Gracias por contactarnos.
-"
+                "✅ Tu cita quedó agendada correctamente."
+                "Gracias por contactarnos."
                 "¡Que tengas un excelente día! 🙌"
             ),
             "done": True
