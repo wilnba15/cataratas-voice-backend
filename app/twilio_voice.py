@@ -11,6 +11,7 @@ from app.routers.voice import handle_message
 
 import re
 
+
 def normalize_speech(text: str) -> str:
     t = (text or "").strip()
     # Caso: 20260212 -> 2026-02-12
@@ -21,7 +22,7 @@ def normalize_speech(text: str) -> str:
 
 
 _EMOJI_RE = re.compile(
-    "[" 
+    "["
     "\U0001F300-\U0001F5FF"
     "\U0001F600-\U0001F64F"
     "\U0001F680-\U0001F6FF"
@@ -36,6 +37,7 @@ _EMOJI_RE = re.compile(
     flags=re.UNICODE
 )
 
+
 def clean_tts(text: str) -> str:
     if not text:
         return ""
@@ -48,10 +50,14 @@ def clean_tts(text: str) -> str:
 
 router = APIRouter()
 
+
 def _say(node, text: str):
+    # Voz clara en español (Twilio Polly)
     node.say(text, language="es-ES", voice="Polly.Conchita")
 
+
 def _gather(clinic_slug: str, sid: int):
+    # Speech + teclado (DTMF), timeout cómodo
     return Gather(
         input="speech dtmf",
         language="es-ES",
@@ -60,6 +66,28 @@ def _gather(clinic_slug: str, sid: int):
         speech_timeout="auto",
         timeout=8,
     )
+
+
+def _say_slots_with_pause(gather: Gather, prompt: str):
+    """
+    Mejora 1:
+    - Lee opciones una por una
+    - Indica explícitamente que marque en el teclado
+    """
+    p = clean_tts(prompt)
+    _say(gather, "Estos son los horarios disponibles.")
+
+    # Extrae opciones tipo: "1) 09:00"
+    matches = re.findall(r"\b([1-5])\)\s*([0-2]?\d:\d{2})\b", p)
+    if matches:
+        for n, hhmm in matches:
+            _say(gather, f"Opción {n}: {hhmm}.")
+    else:
+        # Fallback: si cambia el formato, lee el texto corto
+        _say(gather, p)
+
+    _say(gather, "Por favor, marca el número de tu opción en el teclado.")
+
 
 @router.post("/twilio/voice")
 async def twilio_voice(
@@ -73,7 +101,7 @@ async def twilio_voice(
     try:
         clinic = require_clinic(db, clinic_slug)
 
-        # ✅ CREA sesión en BD (id INT)
+        # Crea sesión en BD (id INT)
         sess = crud.create_voice_session(db, clinic_id=clinic.id)
 
         # (opcional) guardar el CallSid en data_json para trazabilidad
@@ -83,42 +111,106 @@ async def twilio_voice(
         except Exception:
             db.rollback()
 
-        sid = sess.id  # ✅ ESTE ES EL QUE VAMOS A USAR SIEMPRE
+        sid = sess.id
 
-        gather = Gather(
-        input="speech dtmf",
-        language="es-ES",
-        action=f"/twilio/process?clinic={clinic_slug}&sid={sid}",
-        method="POST",
-        speech_timeout="auto",
-        timeout=8
-    )
+        gather = _gather(clinic_slug, sid)
+        _say(gather, "Hola, soy el asistente de la clínica. ¿Cuál es tu nombre completo?")
+        vr.append(gather)
 
-    clean_prompt = clean_tts(prompt)
+        # Fallback si no responde
+        _say(vr, "No te escuché. Intentemos otra vez.")
+        vr.redirect(f"/twilio/voice?clinic={clinic_slug}", method="POST")
+    finally:
+        db.close()
 
-    # ✅ Mejora 1: Horarios claros + pedir marcar en teclado (DTMF)
-    if "horarios disponibles" in clean_prompt.lower():
-        _say(gather, "Estos son los horarios disponibles.")
+    return Response(content=str(vr), media_type="application/xml")
 
-        # Extrae opciones tipo: "1) 09:00"
-        opciones = re.findall(r"(\b[1-5]\)\s*\d{1,2}:\d{2}\b)", clean_prompt)
 
-        # Si no encontró en el formato esperado, intenta con otro formato más permisivo
-        if not opciones:
-            opciones = re.findall(r"(\b[1-5]\)\s*[^\s]+)", clean_prompt)
+@router.post("/twilio/process")
+async def twilio_process(
+    request: Request,
+    SpeechResult: str = Form(default=""),
+    Digits: str = Form(default=""),
+):
+    clinic_slug = request.query_params.get("clinic", "demo")
+    sid_raw = request.query_params.get("sid", "")
 
-        for op in opciones:
-            # op ejemplo: "3) 10:00"
-            parts = op.split(")")
-            numero = parts[0].strip()
-            valor = parts[1].strip() if len(parts) > 1 else ""
-            # Decir la hora/valor sin correr
-            _say(gather, f"Opción {numero}: {valor}.")
+    raw_input = Digits or SpeechResult
+    text = normalize_speech(raw_input)
 
-        _say(gather, "Por favor, marca el número de tu opción en el teclado.")
+    vr = VoiceResponse()
+
+    # sid debe ser int
+    try:
+        sid = int(sid_raw)
+    except Exception:
+        _say(vr, "Se perdió la sesión. Volvamos a empezar.")
+        vr.redirect(f"/twilio/voice?clinic={clinic_slug}", method="POST")
+        return Response(content=str(vr), media_type="application/xml")
+
+    if not text:
+        gather = _gather(clinic_slug, sid)
+        _say(gather, "No te escuché bien. Repite por favor.")
+        vr.append(gather)
+
+        _say(vr, "No te escuché. Intentemos otra vez.")
+        vr.redirect(f"/twilio/voice?clinic={clinic_slug}", method="POST")
+        return Response(content=str(vr), media_type="application/xml")
+
+    db = SessionLocal()
+    try:
+        clinic = require_clinic(db, clinic_slug)
+
+        prov = (
+            db.query(models.Provider)
+            .filter(models.Provider.clinic_id == clinic.id)
+            .order_by(asc(models.Provider.id))
+            .first()
+        )
+        appt = (
+            db.query(models.AppointmentType)
+            .filter(models.AppointmentType.clinic_id == clinic.id)
+            .order_by(asc(models.AppointmentType.id))
+            .first()
+        )
+        provider_id = (prov.id if prov else None) or settings.DEFAULT_PROVIDER_ID
+        type_id = (appt.id if appt else None) or settings.DEFAULT_APPT_TYPE_ID
+
+        try:
+            result = handle_message(
+                db,
+                clinic.id,
+                sid,
+                text,
+                provider_id=provider_id,
+                type_id=type_id,
+            )
+        except Exception as e:
+            print("ERROR /twilio/process:", repr(e))
+            result = {"prompt": "Hubo un problema técnico. Intentemos otra vez.", "done": False}
+    finally:
+        db.close()
+
+    prompt = (result or {}).get("prompt") or "Perfecto. ¿Me repites por favor?"
+    done = bool((result or {}).get("done", False))
+
+    if done:
+        _say(vr, clean_tts(prompt))
+        vr.hangup()
+        return Response(content=str(vr), media_type="application/xml")
+
+    gather = _gather(clinic_slug, sid)
+
+    # ✅ Mejora 1 aplicada solo para el paso de horarios
+    if "horarios disponibles" in (prompt or "").lower():
+        _say_slots_with_pause(gather, prompt)
     else:
-        _say(gather, clean_prompt)
+        _say(gather, clean_tts(prompt))
 
     vr.append(gather)
+
+    # Fallback si no responde
+    _say(vr, "Si prefieres, marca el número en el teclado. Intentemos otra vez.")
+    vr.redirect(f"/twilio/voice?clinic={clinic_slug}", method="POST")
+
     return Response(content=str(vr), media_type="application/xml")
-# este es
