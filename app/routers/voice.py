@@ -209,7 +209,6 @@ def format_time_hhmm(iso_dt: str) -> str:
     return (iso_dt or "")[11:16]
 
 def looks_like_phone(s: str) -> bool:
-    (s: str) -> bool:
     digits = re.sub(r"\D", "", s or "")
     return len(digits) >= 8 and (len(digits) >= int(0.7 * max(1, len(s))))
 
