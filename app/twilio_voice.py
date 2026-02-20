@@ -207,16 +207,22 @@ async def twilio_voice(
 
         sid = sess.id
 
+        # ✅ IMPORTANTE: decimos el saludo FUERA del Gather (más confiable en llamadas reales)
+        _say(vr, "Hola, soy el asistente de la clínica.")
+        vr.pause(length=1)
+        _say(vr, "¿Cuál es tu nombre completo?")
+
+        # Gather solo para escuchar (speech + teclado)
         gather = _gather(clinic_slug, sid)
-        _say(gather, "Hola, soy el asistente de la clínica. ¿Cuál es tu nombre completo?")
         vr.append(gather)
 
+        # Fallback si no detecta voz/teclas
         _say(vr, "No te escuché. Intentemos otra vez.")
         vr.redirect(f"/twilio/voice?clinic={clinic_slug}", method="POST")
     finally:
         db.close()
 
-    return Response(content=str(vr), media_type="application/xml")
+    return Response(content=str(vr), media_type="text/xml")
 
 
 @router.post("/twilio/process")
@@ -238,7 +244,7 @@ async def twilio_process(
     except Exception:
         _say(vr, "Se perdió la sesión. Volvamos a empezar.")
         vr.redirect(f"/twilio/voice?clinic={clinic_slug}", method="POST")
-        return Response(content=str(vr), media_type="application/xml")
+        return Response(content=str(vr), media_type="text/xml")
 
     if not text:
         gather = _gather(clinic_slug, sid)
@@ -247,7 +253,7 @@ async def twilio_process(
 
         _say(vr, "No te escuché. Intentemos otra vez.")
         vr.redirect(f"/twilio/voice?clinic={clinic_slug}", method="POST")
-        return Response(content=str(vr), media_type="application/xml")
+        return Response(content=str(vr), media_type="text/xml")
 
     db = SessionLocal()
     try:
@@ -289,7 +295,7 @@ async def twilio_process(
     if done:
         _say(vr, clean_tts(prompt))
         vr.hangup()
-        return Response(content=str(vr), media_type="application/xml")
+        return Response(content=str(vr), media_type="text/xml")
 
     gather = _gather(clinic_slug, sid)
 
@@ -303,4 +309,4 @@ async def twilio_process(
     _say(vr, "Si prefieres, marca el número en el teclado. Intentemos otra vez.")
     vr.redirect(f"/twilio/voice?clinic={clinic_slug}", method="POST")
 
-    return Response(content=str(vr), media_type="application/xml")
+    return Response(content=str(vr), media_type="text/xml")
