@@ -46,28 +46,10 @@ def clean_tts(text: str) -> str:
         return ""
     t = text
     t = t.replace("✅", "").replace("❌", "").replace("👉", "").replace("📅", "")
-    # Mejora pronunciación de fechas: 2026-02-24 -> 24 de febrero de 2026
-    t = ISO_DATE_RE.sub(_iso_to_es, t)
     t = _EMOJI_RE.sub("", t)
     t = re.sub(r"\s+", " ", t).strip()
     return t
 
-
-
-ISO_DATE_RE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
-
-MONTHS_ES = {
-    1: "enero", 2: "febrero", 3: "marzo", 4: "abril", 5: "mayo", 6: "junio",
-    7: "julio", 8: "agosto", 9: "septiembre", 10: "octubre", 11: "noviembre", 12: "diciembre",
-}
-
-def _iso_to_es(m: re.Match) -> str:
-    y = int(m.group(1)); mo = int(m.group(2)); d = int(m.group(3))
-    month = MONTHS_ES.get(mo, "")
-    if not month:
-        return m.group(0)
-    # comas ayudan a pausas en TTS
-    return f"{d} de {month} de {y}"
 
 router = APIRouter()
 
