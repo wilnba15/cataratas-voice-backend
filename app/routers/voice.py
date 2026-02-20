@@ -277,7 +277,6 @@ def handle_message(db, clinic_id, session_id, text, provider_id: int | None = No
                 "1) Traumatología\n"
                 "2) Oftalmología\n"
                 "3) Cardiología\n"
-"
                 "Responde con el número 1, 2 o 3."
             ),
             "done": False
@@ -415,15 +414,10 @@ def handle_message(db, clinic_id, session_id, text, provider_id: int | None = No
         return {
             "session_id": sess.id,
             "prompt": (
-                "Perfecto ✅ Ahora elige el doctor:
-"
-                "1) Doctor Pedro Coronel
-"
-                "2) Doctor Alexis Obando
-"
-                "3) Doctor José Rodríguez
-"
-"
+                "Perfecto ✅ Ahora elige el doctor:"
+                "1) Doctor Pedro Coronel"
+                "2) Doctor Alexis Obando"
+                "3) Doctor José Rodríguez"
                 "Responde con el número 1, 2 o 3. (También puedes decir el nombre)"
             ),
             "done": False
