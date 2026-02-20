@@ -522,7 +522,7 @@ def handle_message(db, clinic_id, session_id, text, provider_id: int | None = No
                 f"Doctor: {data.get('doctor_name', '')}\n"
                 f"Fecha: {fecha_humana}\n"
                 f"Hora: {hora}\n\n"
-                "¿Confirmas la cita? (sí o no)"
+                "¿Deseas agendar la cita? (sí o no)"
             ),
             "done": False
         }

@@ -41,6 +41,18 @@ _EMOJI_RE = re.compile(
 )
 
 
+def say_lines(vr: VoiceResponse, text: str, *, voice: str, language: str, pause_seconds: float = 0.6) -> None:
+    """Dice el texto por líneas para que haya pausas naturales entre opciones."""
+    t = clean_tts(text or "")
+    lines = [ln.strip() for ln in t.splitlines() if ln.strip()]
+    if not lines:
+        return
+    for i, ln in enumerate(lines):
+        vr.say(ln, voice=voice, language=language)
+        if i != len(lines) - 1:
+            vr.pause(length=pause_seconds)
+
+
 def clean_tts(text: str) -> str:
     if not text:
         return ""
