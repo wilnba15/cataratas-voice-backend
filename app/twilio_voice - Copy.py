@@ -41,6 +41,27 @@ _EMOJI_RE = re.compile(
 )
 
 
+def say_lines(vr: VoiceResponse, text: str, *, voice: str, language: str, pause_seconds: float = 0.9) -> None:
+    """Dice el texto por *líneas* con pausas, sin perder saltos de línea.
+    Nota: NO aplicamos clean_tts() al texto completo antes de split porque clean_tts colapsa \n.
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return
+
+    # 1) divide por líneas originales (\n)
+    lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
+    if not lines:
+        return
+
+    for i, ln in enumerate(lines):
+        ln_clean = clean_tts(ln)  # limpia cada línea (emoji/fechas/espacios)
+        if ln_clean:
+            vr.say(ln_clean, voice=voice, language=language)
+        if i != len(lines) - 1:
+            vr.pause(length=pause_seconds)
+
+
 def clean_tts(text: str) -> str:
     if not text:
         return ""
@@ -77,7 +98,7 @@ def _say(node, text: str):
 
 
 def _gather(clinic_slug: str, sid: int):
-    return Gather(num_digits=1, 
+    return Gather(
         input="speech dtmf",
         language="es-ES",
         action=f"/twilio/process?clinic={clinic_slug}&sid={sid}",
@@ -95,6 +116,7 @@ def _say_slots_with_pause(gather: Gather, prompt: str):
     if matches:
         for n, hhmm in matches:
             _say(gather, f"Opción {n}: {hhmm}.")
+            gather.pause(length=0.9)
     else:
         _say(gather, p)
 
@@ -207,16 +229,22 @@ async def twilio_voice(
 
         sid = sess.id
 
+        # ✅ IMPORTANTE: decimos el saludo FUERA del Gather (más confiable en llamadas reales)
+        _say(vr, "Hola, soy el asistente de la clínica.")
+        vr.pause(length=1)
+        _say(vr, "¿Cuál es tu nombre completo?")
+
+        # Gather solo para escuchar (speech + teclado)
         gather = _gather(clinic_slug, sid)
-        _say(gather, "Hola, soy el asistente de la clínica. ¿Cuál es tu nombre completo?")
         vr.append(gather)
 
+        # Fallback si no detecta voz/teclas
         _say(vr, "No te escuché. Intentemos otra vez.")
         vr.redirect(f"/twilio/voice?clinic={clinic_slug}", method="POST")
     finally:
         db.close()
 
-    return Response(content=str(vr), media_type="application/xml")
+    return Response(content=str(vr), media_type="text/xml")
 
 
 @router.post("/twilio/process")
@@ -238,7 +266,7 @@ async def twilio_process(
     except Exception:
         _say(vr, "Se perdió la sesión. Volvamos a empezar.")
         vr.redirect(f"/twilio/voice?clinic={clinic_slug}", method="POST")
-        return Response(content=str(vr), media_type="application/xml")
+        return Response(content=str(vr), media_type="text/xml")
 
     if not text:
         gather = _gather(clinic_slug, sid)
@@ -247,7 +275,7 @@ async def twilio_process(
 
         _say(vr, "No te escuché. Intentemos otra vez.")
         vr.redirect(f"/twilio/voice?clinic={clinic_slug}", method="POST")
-        return Response(content=str(vr), media_type="application/xml")
+        return Response(content=str(vr), media_type="text/xml")
 
     db = SessionLocal()
     try:
@@ -287,20 +315,21 @@ async def twilio_process(
     done = bool((result or {}).get("done", False))
 
     if done:
-        _say(vr, clean_tts(prompt))
+        say_lines(vr, prompt, voice="Polly.Conchita", language="es-ES")
         vr.hangup()
-        return Response(content=str(vr), media_type="application/xml")
+        return Response(content=str(vr), media_type="text/xml")
 
     gather = _gather(clinic_slug, sid)
 
     if "horarios disponibles" in (prompt or "").lower():
         _say_slots_with_pause(gather, prompt)
     else:
-        _say(gather, clean_tts(prompt))
+        # Para doctores/especialidad y otros listados: decir por líneas con pausas
+        say_lines(gather, prompt, voice="Polly.Conchita", language="es-ES")
 
     vr.append(gather)
 
     _say(vr, "Si prefieres, marca el número en el teclado. Intentemos otra vez.")
     vr.redirect(f"/twilio/voice?clinic={clinic_slug}", method="POST")
 
-    return Response(content=str(vr), media_type="application/xml")
+    return Response(content=str(vr), media_type="text/xml")

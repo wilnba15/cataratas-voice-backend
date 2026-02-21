@@ -224,10 +224,16 @@ def normalize_es(text: str) -> str:
 
 
 def parse_yes_no(text: str) -> bool | None:
-    """Detecta sí/no en frases (tolerante a 'sí por favor', 'ok dale', etc.)."""
+    """Detecta sí/no y también acepta DTMF: 1=Sí, 2=No."""
     norm = normalize_es(text)
 
-    YES = {"si", "s", "claro", "ok", "okay", "acepto", "confirmo", "de acuerdo", "dale", "afirmativo"}
+    # DTMF
+    if norm == "1":
+        return True
+    if norm == "2":
+        return False
+
+    YES = {"si", "sí", "s", "claro", "ok", "okay", "acepto", "confirmo", "de acuerdo", "dale", "afirmativo"}
     NO  = {"no", "n", "cancelar", "cancela", "negativo"}
 
     for y in YES:
@@ -522,7 +528,7 @@ def handle_message(db, clinic_id, session_id, text, provider_id: int | None = No
                 f"Doctor: {data.get('doctor_name', '')}\n"
                 f"Fecha: {fecha_humana}\n"
                 f"Hora: {hora}\n\n"
-                "¿Deseas agendar la cita? (sí o no)"
+                "Para confirmar tu cita, presiona 1 ahora. Para cancelar, presiona 2."
             ),
             "done": False
         }
@@ -535,7 +541,7 @@ def handle_message(db, clinic_id, session_id, text, provider_id: int | None = No
         if yn is None:
             return {
                 "session_id": sess.id,
-                "prompt": "¿Deseas agendar la cita? Responde: sí o no 😊",
+                "prompt": "Para confirmar tu cita, presiona 1 ahora. Para cancelar, presiona 2.",
                 "done": False
             }
 
