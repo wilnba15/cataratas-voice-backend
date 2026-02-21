@@ -21,7 +21,7 @@ from app import models  # o donde importes Provider / AppointmentType
 router = APIRouter(prefix="/voice", tags=["voice"])
 
 # ====== Demo / texto final (personalizable por clínica) ======
-DEMO_CLINIC_NAME = "Clínica ABC"
+DEMO_CLINIC_NAME = "Clínica Oftalmologica del Valle"
 DEMO_CLINIC_ADDRESS = "Av. 10 de Agosto y Mañosca, edificio AXXIS, tercer piso, consultorio 306"
 
 
@@ -103,15 +103,84 @@ WEEKDAYS_ES = {
 }
 
 def parse_date_es(text: str, now: datetime) -> str | None:
-    t = (text or "").strip().lower()
+    """Parsea fechas en español de forma tolerante para voz/Twilio.
+    Soporta:
+      - hoy / mañana
+      - días: lunes, martes...
+      - ISO: 2026-02-24
+      - compacto: 20260224
+      - dd/mm/yyyy
+      - '24 de febrero de 2026' / '24 febrero 2026'
+      - '2026 2 24' (con separadores varios)
+    Devuelve 'YYYY-MM-DD' o None.
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return None
 
-    # ✅ Detecta formato 20260212
+    t = raw.strip().lower()
+    norm = normalize_es(raw)  # sin tildes, sin puntuación
+
+    # 1) compacto: 20260224
     if re.fullmatch(r"\d{8}", t):
         try:
             dt = datetime.strptime(t, "%Y%m%d").date()
             return dt.isoformat()
         except ValueError:
             return None
+
+    # 2) hoy / mañana
+    if norm == "hoy":
+        return now.date().isoformat()
+    if norm in ("manana", "mañana"):
+        return (now.date() + timedelta(days=1)).isoformat()
+
+    # 3) día de la semana (próxima ocurrencia)
+    if norm in WEEKDAYS_ES:
+        target = WEEKDAYS_ES[norm]
+        delta = (target - now.weekday()) % 7
+        delta = 7 if delta == 0 else delta
+        return (now.date() + timedelta(days=delta)).isoformat()
+
+    # 4) yyyy-mm-dd (o con separadores raros)
+    m = re.search(r"(\d{4})\D+(\d{1,2})\D+(\d{1,2})", t)
+    if m:
+        y = int(m.group(1)); mo = int(m.group(2)); d = int(m.group(3))
+        try:
+            return datetime(y, mo, d).date().isoformat()
+        except Exception:
+            return None
+
+    # 5) dd/mm/yyyy
+    m = re.search(r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b", t)
+    if m:
+        d = int(m.group(1)); mo = int(m.group(2)); y = int(m.group(3))
+        try:
+            return datetime(y, mo, d).date().isoformat()
+        except Exception:
+            return None
+
+    # 6) '24 de febrero de 2026' (o sin 'de')
+    month_map = {
+        "enero": 1, "febrero": 2, "marzo": 3, "abril": 4, "mayo": 5, "junio": 6,
+        "julio": 7, "agosto": 8, "septiembre": 9, "setiembre": 9, "octubre": 10, "noviembre": 11, "diciembre": 12,
+    }
+    # usar norm para que "febréro" etc no rompa
+    m = re.search(
+        r"\b(\d{1,2})\s*(?:de\s+)?"
+        r"(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre)"
+        r"\s*(?:de\s+)?(\d{4})\b",
+        norm
+    )
+    if m:
+        d = int(m.group(1)); month_name = m.group(2); y = int(m.group(3))
+        mo = month_map.get(month_name)
+        try:
+            return datetime(y, mo, d).date().isoformat()
+        except Exception:
+            return None
+
+    return None
 
 
 
@@ -136,41 +205,8 @@ def format_date_es(date_iso: str) -> str:
     return f"{wd}, {d.day} de {month} de {d.year}".strip()
 
 def format_time_hhmm(iso_dt: str) -> str:
+    """Extrae HH:MM de un ISO datetime."""
     return (iso_dt or "")[11:16]
-    if t == "hoy":
-        return now.date().isoformat()
-    if t in ("mañana", "manana"):
-        return (now.date() + timedelta(days=1)).isoformat()
-
-    if t in WEEKDAYS_ES:
-        target = WEEKDAYS_ES[t]
-        delta = (target - now.weekday()) % 7
-        delta = 7 if delta == 0 else delta  # si hoy es lunes y dice "lunes", será el próximo lunes
-        return (now.date() + timedelta(days=delta)).isoformat()
-
-    # ✅ Detecta yyyy-mm-dd o yyyy mm dd o yyyy/ mm/ dd aunque venga con palabras (por voz)
-    m = re.search(r"(\d{4})\D+(\d{1,2})\D+(\d{1,2})", t)
-    if m:
-        y = int(m.group(1))
-        mo = int(m.group(2))
-        d = int(m.group(3))
-        if 1 <= mo <= 12 and 1 <= d <= 31:
-            return f"{y:04d}-{mo:02d}-{d:02d}"
-
-    # ISO yyyy-mm-dd (si vino perfecto)
-    try:
-        return datetime.strptime(t, "%Y-%m-%d").date().isoformat()
-    except Exception:
-        pass
-
-    # dd/mm/yyyy
-    try:
-        return datetime.strptime(t, "%d/%m/%Y").date().isoformat()
-    except Exception:
-        pass
-
-    return None
-
 
 def looks_like_phone(s: str) -> bool:
     digits = re.sub(r"\D", "", s or "")
@@ -188,25 +224,19 @@ def normalize_es(text: str) -> str:
 
 
 def parse_yes_no(text: str) -> bool | None:
-            norm = normalize_es(text)
+    """Detecta sí/no en frases (tolerante a 'sí por favor', 'ok dale', etc.)."""
+    norm = normalize_es(text)
 
-            # soporte teclado (DTMF)
-            if norm == "1":
-                return True
-            if norm == "2":
-                return False
+    YES = {"si", "s", "claro", "ok", "okay", "acepto", "confirmo", "de acuerdo", "dale", "afirmativo"}
+    NO  = {"no", "n", "cancelar", "cancela", "negativo"}
 
-            YES = {"si", "sí", "s", "claro", "ok", "okay", "acepto", "confirmo", "de acuerdo", "dale"}
-            NO  = {"no", "n", "cancelar", "cancela", "negativo"}
-
-            for y in YES:
-                if y in norm:
-                    return True
-            for n in NO:
-                if n in norm:
-                    return False
-
-            return None
+    for y in YES:
+        if y in norm:
+            return True
+    for n in NO:
+        if n in norm:
+            return False
+    return None
 
 
 def get_defaults_for_clinic(db: Session, clinic_id: int) -> tuple[int, int]:
@@ -322,7 +352,7 @@ def handle_message(db, clinic_id, session_id, text, provider_id: int | None = No
             "prompt": (
                 f"Perfecto ✅ Especialidad: {data['specialty']}\n\n"
                 "Ahora sí, agendemos tu cita.\n"
-                "¿Para qué fecha deseas la cita? (Ejemplo: mañana, martes, o 2026-02-24)"
+                "¿Para qué fecha deseas la cita? (Ejemplo: 10 febrero 2026)"
             ),
             "done": False
         }
@@ -333,7 +363,7 @@ def handle_message(db, clinic_id, session_id, text, provider_id: int | None = No
         if not date_iso:
             return {
                 "session_id": sess.id,
-                "prompt": "No entendí la fecha 😅. Dime por ejemplo: 'mañana' o 'lunes' o '2026-02-10'.",
+                "prompt": "No entendí la fecha 😅. Repite nuevamente.",
                 "done": False
             }
 
@@ -374,7 +404,7 @@ def handle_message(db, clinic_id, session_id, text, provider_id: int | None = No
         opciones_txt = "\n".join([f"{i+1}) {opt['start'][11:16]}" for i, opt in enumerate(data["slot_options"])])
         return {
             "session_id": sess.id,
-            "prompt": f"Estos son los horarios disponibles para {data['date']}:\n{opciones_txt}\nElige el número del 1 al 5.",
+            "prompt": f"Estos son los horarios disponibles para {format_date_es(data['date'])}:\n{opciones_txt}\nElige el número del 1 al 5.",
             "done": False
         }
 
@@ -420,10 +450,10 @@ def handle_message(db, clinic_id, session_id, text, provider_id: int | None = No
         return {
             "session_id": sess.id,
             "prompt": (
-                "Perfecto ✅ Ahora elige el doctor:"
-                "1) Doctor Pedro Coronel"
-                "2) Doctor Alexis Obando"
-                "3) Doctor José Rodríguez"
+                "Perfecto ✅ Ahora elige el doctor:\n"
+                "1) Doctor Pedro Coronel\n"
+                "2) Doctor Alexis Obando\n"
+                "3) Doctor José Rodríguez\n"
                 "Responde con el número 1, 2 o 3. (También puedes decir el nombre)"
             ),
             "done": False
@@ -492,7 +522,7 @@ def handle_message(db, clinic_id, session_id, text, provider_id: int | None = No
                 f"Doctor: {data.get('doctor_name', '')}\n"
                 f"Fecha: {fecha_humana}\n"
                 f"Hora: {hora}\n\n"
-                "¿Confirmas la cita? (sí o no)"
+                "¿Deseas agendar la cita? (sí o no)"
             ),
             "done": False
         }
@@ -505,7 +535,7 @@ def handle_message(db, clinic_id, session_id, text, provider_id: int | None = No
         if yn is None:
             return {
                 "session_id": sess.id,
-                "prompt": "Solo para confirmar 😊 ¿sí o no?",
+                "prompt": "¿Deseas agendar la cita? Responde: sí o no 😊",
                 "done": False
             }
 
@@ -545,9 +575,14 @@ def handle_message(db, clinic_id, session_id, text, provider_id: int | None = No
         return {
             "session_id": sess.id,
             "prompt": (
-                "✅ Tu cita quedó agendada correctamente.\n"
-                "Gracias por contactarnos.\n"
-                "¡Que tengas un excelente día! 🙌"
+                "✅ Listo. "
+                f"Tu cita queda agendada para {format_date_es(data.get('date', ''))}, "
+                f"a las {format_time_hhmm(data.get('chosen_slot', {}).get('start', ''))}. "
+                f"En la especialidad de {data.get('specialty', '')}, "
+                f"con el doctor {data.get('doctor_name', '')}. "
+                f"Te esperamos en la {DEMO_CLINIC_NAME}. "
+                f"{DEMO_CLINIC_ADDRESS}. "
+                "Que tengas un excelente día 🙌"
             ),
             "done": True
         }
