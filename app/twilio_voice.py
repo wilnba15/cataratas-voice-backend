@@ -42,13 +42,22 @@ _EMOJI_RE = re.compile(
 
 
 def say_lines(vr: VoiceResponse, text: str, *, voice: str, language: str, pause_seconds: float = 0.9) -> None:
-    """Dice el texto por líneas para que haya pausas naturales entre opciones."""
-    t = clean_tts(text or "")
-    lines = [ln.strip() for ln in t.splitlines() if ln.strip()]
+    """Dice el texto por *líneas* con pausas, sin perder saltos de línea.
+    Nota: NO aplicamos clean_tts() al texto completo antes de split porque clean_tts colapsa \n.
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return
+
+    # 1) divide por líneas originales (\n)
+    lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
     if not lines:
         return
+
     for i, ln in enumerate(lines):
-        vr.say(ln, voice=voice, language=language)
+        ln_clean = clean_tts(ln)  # limpia cada línea (emoji/fechas/espacios)
+        if ln_clean:
+            vr.say(ln_clean, voice=voice, language=language)
         if i != len(lines) - 1:
             vr.pause(length=pause_seconds)
 
