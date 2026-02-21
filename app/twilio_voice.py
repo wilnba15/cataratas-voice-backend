@@ -41,7 +41,7 @@ _EMOJI_RE = re.compile(
 )
 
 
-def say_lines(vr: VoiceResponse, text: str, *, voice: str, language: str, pause_seconds: float = 0.6) -> None:
+def say_lines(vr: VoiceResponse, text: str, *, voice: str, language: str, pause_seconds: float = 0.9) -> None:
     """Dice el texto por líneas para que haya pausas naturales entre opciones."""
     t = clean_tts(text or "")
     lines = [ln.strip() for ln in t.splitlines() if ln.strip()]
@@ -107,6 +107,7 @@ def _say_slots_with_pause(gather: Gather, prompt: str):
     if matches:
         for n, hhmm in matches:
             _say(gather, f"Opción {n}: {hhmm}.")
+            gather.pause(length=0.9)
     else:
         _say(gather, p)
 
@@ -305,7 +306,7 @@ async def twilio_process(
     done = bool((result or {}).get("done", False))
 
     if done:
-        _say(vr, clean_tts(prompt))
+        say_lines(vr, prompt, voice="Polly.Conchita", language="es-ES")
         vr.hangup()
         return Response(content=str(vr), media_type="text/xml")
 
@@ -314,7 +315,8 @@ async def twilio_process(
     if "horarios disponibles" in (prompt or "").lower():
         _say_slots_with_pause(gather, prompt)
     else:
-        _say(gather, clean_tts(prompt))
+        # Para doctores/especialidad y otros listados: decir por líneas con pausas
+        say_lines(gather, prompt, voice="Polly.Conchita", language="es-ES")
 
     vr.append(gather)
 

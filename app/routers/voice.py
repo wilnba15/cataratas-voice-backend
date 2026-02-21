@@ -21,7 +21,7 @@ from app import models  # o donde importes Provider / AppointmentType
 router = APIRouter(prefix="/voice", tags=["voice"])
 
 # ====== Demo / texto final (personalizable por clínica) ======
-DEMO_CLINIC_NAME = "Clínica ABC"
+DEMO_CLINIC_NAME = "Clínica Oftalmologica del Valle"
 DEMO_CLINIC_ADDRESS = "Av. 10 de Agosto y Mañosca, edificio AXXIS, tercer piso, consultorio 306"
 
 
@@ -535,7 +535,7 @@ def handle_message(db, clinic_id, session_id, text, provider_id: int | None = No
         if yn is None:
             return {
                 "session_id": sess.id,
-                "prompt": "Solo para confirmar 😊 ¿sí o no?",
+                "prompt": "¿Deseas agendar la cita? Responde: sí o no 😊",
                 "done": False
             }
 
@@ -575,9 +575,14 @@ def handle_message(db, clinic_id, session_id, text, provider_id: int | None = No
         return {
             "session_id": sess.id,
             "prompt": (
-                "✅ Tu cita quedó agendada correctamente.\n"
-                "Gracias por contactarnos.\n"
-                "¡Que tengas un excelente día! 🙌"
+                "✅ Listo. "
+                f"Tu cita queda agendada para {format_date_es(data.get('date', ''))}, "
+                f"a las {format_time_hhmm(data.get('chosen_slot', {}).get('start', ''))}. "
+                f"En la especialidad de {data.get('specialty', '')}, "
+                f"con el doctor {data.get('doctor_name', '')}. "
+                f"Te esperamos en la {DEMO_CLINIC_NAME}. "
+                f"{DEMO_CLINIC_ADDRESS}. "
+                "Que tengas un excelente día 🙌"
             ),
             "done": True
         }

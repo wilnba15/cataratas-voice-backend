@@ -1,0 +1,23 @@
+PARA ARRANCAR CATARATAS VOICE
+
+cd C:\cataratas-voice
+.venv\Scripts\activate
+uvicorn app.main:app --reload --port 8001
+
+
+En otro cmd:
+
+cd C:\cataratas-voice
+python -m http.server 5500
+http://127.0.0.1:5500/web_test.html
+
+
+$env:DATABASE_URL="postgresql://cataratas_voice_staging_db_user:PGsIHo4hJsCb0sub6faISGDpJTpj2G00@dpg-d6203vfpm1nc73fivqt0-a.oregon-postgres.render.com/cataratas_voice_staging_db?sslmode=require"
+
+
+CONECTARSE A LA BD 
+
+En Powershell
+cd C:\cataratas-voice
+.venv\Scripts\activate
+psql $env:DATABASE_URL
