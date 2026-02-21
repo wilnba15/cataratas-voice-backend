@@ -528,7 +528,7 @@ def handle_message(db, clinic_id, session_id, text, provider_id: int | None = No
                 f"Doctor: {data.get('doctor_name', '')}\n"
                 f"Fecha: {fecha_humana}\n"
                 f"Hora: {hora}\n\n"
-                "Para confirmar tu cita, presiona 1 ahora. Para cancelar, presiona 2."
+                "Para confirmar tu cita, presiona 1. Para cancelar, presiona 2."
             ),
             "done": False
         }
@@ -541,7 +541,7 @@ def handle_message(db, clinic_id, session_id, text, provider_id: int | None = No
         if yn is None:
             return {
                 "session_id": sess.id,
-                "prompt": "Para confirmar tu cita, presiona 1 ahora. Para cancelar, presiona 2.",
+                "prompt": "Para confirmar tu cita, presiona 1. Para cancelar, presiona 2.",
                 "done": False
             }
 
