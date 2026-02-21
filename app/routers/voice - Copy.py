@@ -20,6 +20,10 @@ from app import models  # o donde importes Provider / AppointmentType
 
 router = APIRouter(prefix="/voice", tags=["voice"])
 
+# ====== Demo / texto final (personalizable por clínica) ======
+DEMO_CLINIC_NAME = "Clínica Oftalmologica del Valle"
+DEMO_CLINIC_ADDRESS = "Av. 10 de Agosto y Mañosca, edificio AXXIS, tercer piso, consultorio 306"
+
 
 # Endpoint de prueba de disponibilidad (SIN Twilio todavía)
 
@@ -99,9 +103,25 @@ WEEKDAYS_ES = {
 }
 
 def parse_date_es(text: str, now: datetime) -> str | None:
-    t = (text or "").strip().lower()
+    """Parsea fechas en español de forma tolerante para voz/Twilio.
+    Soporta:
+      - hoy / mañana
+      - días: lunes, martes...
+      - ISO: 2026-02-24
+      - compacto: 20260224
+      - dd/mm/yyyy
+      - '24 de febrero de 2026' / '24 febrero 2026'
+      - '2026 2 24' (con separadores varios)
+    Devuelve 'YYYY-MM-DD' o None.
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return None
 
-    # ✅ Detecta formato 20260212
+    t = raw.strip().lower()
+    norm = normalize_es(raw)  # sin tildes, sin puntuación
+
+    # 1) compacto: 20260224
     if re.fullmatch(r"\d{8}", t):
         try:
             dt = datetime.strptime(t, "%Y%m%d").date()
@@ -109,41 +129,84 @@ def parse_date_es(text: str, now: datetime) -> str | None:
         except ValueError:
             return None
 
-
-    if t == "hoy":
+    # 2) hoy / mañana
+    if norm == "hoy":
         return now.date().isoformat()
-    if t in ("mañana", "manana"):
+    if norm in ("manana", "mañana"):
         return (now.date() + timedelta(days=1)).isoformat()
 
-    if t in WEEKDAYS_ES:
-        target = WEEKDAYS_ES[t]
+    # 3) día de la semana (próxima ocurrencia)
+    if norm in WEEKDAYS_ES:
+        target = WEEKDAYS_ES[norm]
         delta = (target - now.weekday()) % 7
-        delta = 7 if delta == 0 else delta  # si hoy es lunes y dice "lunes", será el próximo lunes
+        delta = 7 if delta == 0 else delta
         return (now.date() + timedelta(days=delta)).isoformat()
 
-    # ✅ Detecta yyyy-mm-dd o yyyy mm dd o yyyy/ mm/ dd aunque venga con palabras (por voz)
+    # 4) yyyy-mm-dd (o con separadores raros)
     m = re.search(r"(\d{4})\D+(\d{1,2})\D+(\d{1,2})", t)
     if m:
-        y = int(m.group(1))
-        mo = int(m.group(2))
-        d = int(m.group(3))
-        if 1 <= mo <= 12 and 1 <= d <= 31:
-            return f"{y:04d}-{mo:02d}-{d:02d}"
+        y = int(m.group(1)); mo = int(m.group(2)); d = int(m.group(3))
+        try:
+            return datetime(y, mo, d).date().isoformat()
+        except Exception:
+            return None
 
-    # ISO yyyy-mm-dd (si vino perfecto)
-    try:
-        return datetime.strptime(t, "%Y-%m-%d").date().isoformat()
-    except Exception:
-        pass
+    # 5) dd/mm/yyyy
+    m = re.search(r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b", t)
+    if m:
+        d = int(m.group(1)); mo = int(m.group(2)); y = int(m.group(3))
+        try:
+            return datetime(y, mo, d).date().isoformat()
+        except Exception:
+            return None
 
-    # dd/mm/yyyy
-    try:
-        return datetime.strptime(t, "%d/%m/%Y").date().isoformat()
-    except Exception:
-        pass
+    # 6) '24 de febrero de 2026' (o sin 'de')
+    month_map = {
+        "enero": 1, "febrero": 2, "marzo": 3, "abril": 4, "mayo": 5, "junio": 6,
+        "julio": 7, "agosto": 8, "septiembre": 9, "setiembre": 9, "octubre": 10, "noviembre": 11, "diciembre": 12,
+    }
+    # usar norm para que "febréro" etc no rompa
+    m = re.search(
+        r"\b(\d{1,2})\s*(?:de\s+)?"
+        r"(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre)"
+        r"\s*(?:de\s+)?(\d{4})\b",
+        norm
+    )
+    if m:
+        d = int(m.group(1)); month_name = m.group(2); y = int(m.group(3))
+        mo = month_map.get(month_name)
+        try:
+            return datetime(y, mo, d).date().isoformat()
+        except Exception:
+            return None
 
     return None
 
+
+
+# ====== Helpers de voz (mejor pronunciación) ======
+MONTHS_ES = {
+    1: "enero", 2: "febrero", 3: "marzo", 4: "abril", 5: "mayo", 6: "junio",
+    7: "julio", 8: "agosto", 9: "septiembre", 10: "octubre", 11: "noviembre", 12: "diciembre",
+}
+WEEKDAYS_NAME_ES = {
+    0: "lunes", 1: "martes", 2: "miércoles", 3: "jueves", 4: "viernes", 5: "sábado", 6: "domingo",
+}
+
+def format_date_es(date_iso: str) -> str:
+    """Convierte YYYY-MM-DD -> 'martes 24 de febrero de 2026' (para TTS/llamadas)."""
+    try:
+        d = datetime.fromisoformat(date_iso).date()
+    except Exception:
+        return date_iso
+    wd = WEEKDAYS_NAME_ES.get(d.weekday(), "")
+    month = MONTHS_ES.get(d.month, "")
+    # Comas ayudan a que Twilio haga pausas naturales
+    return f"{wd}, {d.day} de {month} de {d.year}".strip()
+
+def format_time_hhmm(iso_dt: str) -> str:
+    """Extrae HH:MM de un ISO datetime."""
+    return (iso_dt or "")[11:16]
 
 def looks_like_phone(s: str) -> bool:
     digits = re.sub(r"\D", "", s or "")
@@ -241,26 +304,66 @@ def handle_message(db, clinic_id, session_id, text, provider_id: int | None = No
     # ====== 2) TELÉFONO ======
     if sess.state == "ASK_PHONE":
         data["phone"] = text
-        crud.update_voice_session(db, sess, "INFO_GENERAL", data)
+        crud.update_voice_session(db, sess, "ASK_SPECIALTY", data)
         return {
             "session_id": sess.id,
             "prompt": (
                 "Perfecto ✅\n"
-                "Atendemos de lunes a viernes de 09:00 a 17:00.\n"
-                "La consulta incluye evaluación completa con el especialista.\n\n"
-                "Ahora sí, agendemos tu cita.\n"
-                "¿Para qué fecha deseas la cita? (Ej: mañana, lunes, 2026-02-10)"
+                "Antes de agendar, dime por favor la *especialidad*:\n"
+                "1) Traumatología\n"
+                "2) Oftalmología\n"
+                "3) Cardiología\n"
+                "Responde con el número 1, 2 o 3."
             ),
             "done": False
         }
 
-    # ====== 3) FECHA (acepta natural) + slots ======
+    
+    # ====== 3) ESPECIALIDAD ======
+    if sess.state == "ASK_SPECIALTY":
+        raw = (text or "").strip().lower()
+
+        m = re.search(r"\b([1-3])\b", raw)
+        choice = int(m.group(1)) if m else None
+
+        # soporta voz: "oftalmologia", "cardiologia", etc.
+        norm = normalize_es(text)
+        if choice is None:
+            if "trauma" in norm:
+                choice = 1
+            elif "oftal" in norm:
+                choice = 2
+            elif "cardio" in norm:
+                choice = 3
+
+        specialties = {1: "Traumatología", 2: "Oftalmología", 3: "Cardiología"}
+
+        if choice not in specialties:
+            return {
+                "session_id": sess.id,
+                "prompt": "No entendí 😅 Elige 1, 2 o 3: Traumatología, Oftalmología o Cardiología.",
+                "done": False
+            }
+
+        data["specialty"] = specialties[choice]
+        crud.update_voice_session(db, sess, "INFO_GENERAL", data)
+        return {
+            "session_id": sess.id,
+            "prompt": (
+                f"Perfecto ✅ Especialidad: {data['specialty']}\n\n"
+                "Ahora sí, agendemos tu cita.\n"
+                "¿Para qué fecha deseas la cita? (Ejemplo: 10 febrero 2026)"
+            ),
+            "done": False
+        }
+
+# ====== 3) FECHA (acepta natural) + slots ======
     if sess.state == "INFO_GENERAL":
         date_iso = parse_date_es(text, now=datetime.now())
         if not date_iso:
             return {
                 "session_id": sess.id,
-                "prompt": "No entendí la fecha 😅. Dime por ejemplo: 'mañana', 'lunes' o '2026-02-10'.",
+                "prompt": "No entendí la fecha 😅. Repite nuevamente.",
                 "done": False
             }
 
@@ -301,7 +404,7 @@ def handle_message(db, clinic_id, session_id, text, provider_id: int | None = No
         opciones_txt = "\n".join([f"{i+1}) {opt['start'][11:16]}" for i, opt in enumerate(data["slot_options"])])
         return {
             "session_id": sess.id,
-            "prompt": f"Estos son los horarios disponibles para {data['date']}:\n{opciones_txt}\nElige el número (1-5).",
+            "prompt": f"Estos son los horarios disponibles para {format_date_es(data['date'])}:\n{opciones_txt}\nElige el número del 1 al 5.",
             "done": False
         }
 
@@ -346,53 +449,93 @@ def handle_message(db, clinic_id, session_id, text, provider_id: int | None = No
 
         return {
             "session_id": sess.id,
-            "prompt": "¿Deseas atenderte con el doctor asignado por defecto? (sí o no)",
-            "done": False
-        }
-
-    # ====== 5) DOCTOR (por ahora default) ======
-    if sess.state == "ASK_DOCTOR":
-        yn = parse_yes_no(text)
-        if yn is None:
-            return {
-                "session_id": sess.id,
-                "prompt": "No entendí 😅 Responde por favor: 'sí' o 'no'.",
-                "done": False
-            }
-
-        if yn is False:
-            return {
-                "session_id": sess.id,
-                "prompt": "Por ahora solo tenemos el doctor asignado por defecto. ¿Confirmamos con él? (sí o no)",
-                "done": False
-            }
-
-        # Sí => usamos el doctor default de la clínica
-        data["doctor"] = provider_id
-        crud.update_voice_session(db, sess, "CONFIRM", data)
-
-        hora = data.get("chosen_slot", {}).get("start", "")[11:16]
-        return {
-            "session_id": sess.id,
             "prompt": (
-                "Voy a agendar tu cita con estos datos:"
-                f"Paciente: {data.get('full_name', '')}"
-                f"Teléfono: {data.get('phone', '')}"
-                f"Fecha: {data.get('date', '')}"
-                f"Hora: {hora}"
-                "¿Confirmas la cita? (sí/no)"
+                "Perfecto ✅ Ahora elige el doctor:\n"
+                "1) Doctor Pedro Coronel\n"
+                "2) Doctor Alexis Obando\n"
+                "3) Doctor José Rodríguez\n"
+                "Responde con el número 1, 2 o 3. (También puedes decir el nombre)"
             ),
             "done": False
         }
 
-    # ====== 6) CONFIRMAR + GUARDAR ======
+    # ====== 5) DOCTOR (3 opciones) ======
+    if sess.state == "ASK_DOCTOR":
+        # Trae hasta 3 doctores reales de la BD (por clínica). Si faltan, cae al default.
+        providers = (
+            db.query(models.Provider)
+            .filter(models.Provider.clinic_id == clinic_id)
+            .order_by(asc(models.Provider.id))
+            .limit(3)
+            .all()
+        )
+
+        # Nombres “de demo” (lo que el cliente escucha). Si en BD hay nombres, podríamos usarlos luego.
+        demo_names = {
+            1: "Doctor Pedro Coronel",
+            2: "Doctor Alexis Obando",
+            3: "Doctor José Rodríguez",
+        }
+
+        raw = (text or "").strip().lower()
+        mnum = re.search(r"\b([1-3])\b", raw)
+        choice = int(mnum.group(1)) if mnum else None
+
+        # Soporta voz por nombre/apellido
+        norm = normalize_es(text)
+        if choice is None:
+            if "pedro" in norm or "coronel" in norm:
+                choice = 1
+            elif "alexis" in norm or "obando" in norm:
+                choice = 2
+            elif "jose" in norm or "rodriguez" in norm or "rodríguez" in (text or ""):
+                choice = 3
+
+        if choice not in (1, 2, 3):
+            return {
+                "session_id": sess.id,
+                "prompt": "No entendí 😅 Elige 1, 2 o 3 para el doctor.",
+                "done": False
+            }
+
+        # provider_id real: si hay 3 providers, mapea 1->0, 2->1, 3->2. Si no, usa el default.
+        provider_real = None
+        if providers and len(providers) >= choice:
+            provider_real = providers[choice - 1].id
+
+        data["doctor_choice"] = choice
+        data["doctor_name"] = demo_names[choice]
+        data["doctor"] = int(provider_real or provider_id)
+
+        crud.update_voice_session(db, sess, "CONFIRM", data)
+
+        hora = format_time_hhmm(data.get("chosen_slot", {}).get("start", ""))
+        fecha_humana = format_date_es(data.get("date", ""))
+
+        return {
+            "session_id": sess.id,
+            "prompt": (
+                "Voy a agendar tu cita con estos datos:\n"
+                f"Paciente: {data.get('full_name', '')}\n"
+                f"Teléfono: {data.get('phone', '')}\n"
+                f"Especialidad: {data.get('specialty', '')}\n"
+                f"Doctor: {data.get('doctor_name', '')}\n"
+                f"Fecha: {fecha_humana}\n"
+                f"Hora: {hora}\n\n"
+                "¿Deseas agendar la cita? (sí o no)"
+            ),
+            "done": False
+        }
+
+# ====== 6) CONFIRMAR + GUARDAR ======
+
     if sess.state == "CONFIRM":
         yn = parse_yes_no(text)
 
         if yn is None:
             return {
                 "session_id": sess.id,
-                "prompt": "Solo para confirmar 😊 ¿sí o no?",
+                "prompt": "¿Deseas agendar la cita? Responde: sí o no 😊",
                 "done": False
             }
 
@@ -432,63 +575,32 @@ def handle_message(db, clinic_id, session_id, text, provider_id: int | None = No
         return {
             "session_id": sess.id,
             "prompt": (
-                "✅ Tu cita quedó agendada correctamente."
-                "Gracias por contactarnos."
-                "¡Que tengas un excelente día! 🙌"
+                "✅ Listo. "
+                f"Tu cita queda agendada para {format_date_es(data.get('date', ''))}, "
+                f"a las {format_time_hhmm(data.get('chosen_slot', {}).get('start', ''))}. "
+                f"En la especialidad de {data.get('specialty', '')}, "
+                f"con el doctor {data.get('doctor_name', '')}. "
+                f"Te esperamos en la {DEMO_CLINIC_NAME}. "
+                f"{DEMO_CLINIC_ADDRESS}. "
+                "Que tengas un excelente día 🙌"
             ),
             "done": True
         }
 
 
-    return {
-                "session_id": sess.id,
-                "prompt": "De acuerdo. ¿Qué fecha prefieres? (Ej: mañana, lunes, 2026-02-10)",
-                "done": False
-            }
-
-    if norm not in YES:
-        return {
-                "session_id": sess.id,
-                "p rompt": "Solo para confirmar 😊 ¿sí o no?",
-                "done": False
-        }
-
-        start_dt = datetime.fromisoformat(data["chosen_slot"]["start"])
-
-        patient = crud.get_or_create_patient(
-            db,
-            clinic_id=clinic_id,
-            full_name=data["full_name"],
-            phone=data["phone"]
-        )
-
-
-        crud.create_appointment(
-            db=db,
-            clinic_id=clinic_id,
-            patient_id=patient.id,
-            provider_id=settings.DEFAULT_PROVIDER_ID,
-            type_id=settings.DEFAULT_APPT_TYPE_ID,
-            start_time=start_dt
-        )
-
-
-        crud.update_voice_session(db, sess, "END", data)
-
+    # ====== Estado final ======
+    if sess.state == "END":
         return {
             "session_id": sess.id,
-            "prompt": (
-                "✅ Tu cita quedó agendada correctamente.\n"
-                "Gracias por contactarnos.\n"
-                "¡Que tengas un excelente día! 🙌"
-            ),
+            "prompt": "La sesión ya terminó. Si deseas iniciar otra, usa /voice/start",
             "done": True
         }
 
+    # Fallback
     return {
         "session_id": sess.id,
-        "prompt": "La sesión ya terminó. Si deseas iniciar otra, usa /voice/start",
-        "done": True
+        "prompt": "No entendí 😅 ¿me repites por favor?",
+        "done": False
     }
 
 

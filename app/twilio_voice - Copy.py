@@ -1,6 +1,8 @@
-from fastapi import APIRouter, Request, Form
+from fastapi import APIRouter, Request, Form, HTTPException
 from fastapi.responses import Response
+from pydantic import BaseModel
 from twilio.twiml.voice_response import VoiceResponse, Gather
+from twilio.rest import Client
 from sqlalchemy import asc
 
 from app.db import SessionLocal
@@ -9,6 +11,7 @@ from app import models, crud
 from app.config import settings
 from app.routers.voice import handle_message
 
+import os
 import re
 
 
@@ -38,26 +41,63 @@ _EMOJI_RE = re.compile(
 )
 
 
+def say_lines(vr: VoiceResponse, text: str, *, voice: str, language: str, pause_seconds: float = 0.9) -> None:
+    """Dice el texto por *líneas* con pausas, sin perder saltos de línea.
+    Nota: NO aplicamos clean_tts() al texto completo antes de split porque clean_tts colapsa \n.
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return
+
+    # 1) divide por líneas originales (\n)
+    lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
+    if not lines:
+        return
+
+    for i, ln in enumerate(lines):
+        ln_clean = clean_tts(ln)  # limpia cada línea (emoji/fechas/espacios)
+        if ln_clean:
+            vr.say(ln_clean, voice=voice, language=language)
+        if i != len(lines) - 1:
+            vr.pause(length=pause_seconds)
+
+
 def clean_tts(text: str) -> str:
     if not text:
         return ""
     t = text
     t = t.replace("✅", "").replace("❌", "").replace("👉", "").replace("📅", "")
+    # Mejora pronunciación de fechas: 2026-02-24 -> 24 de febrero de 2026
+    t = ISO_DATE_RE.sub(_iso_to_es, t)
     t = _EMOJI_RE.sub("", t)
     t = re.sub(r"\s+", " ", t).strip()
     return t
 
 
+
+ISO_DATE_RE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
+
+MONTHS_ES = {
+    1: "enero", 2: "febrero", 3: "marzo", 4: "abril", 5: "mayo", 6: "junio",
+    7: "julio", 8: "agosto", 9: "septiembre", 10: "octubre", 11: "noviembre", 12: "diciembre",
+}
+
+def _iso_to_es(m: re.Match) -> str:
+    y = int(m.group(1)); mo = int(m.group(2)); d = int(m.group(3))
+    month = MONTHS_ES.get(mo, "")
+    if not month:
+        return m.group(0)
+    # comas ayudan a pausas en TTS
+    return f"{d} de {month} de {y}"
+
 router = APIRouter()
 
 
 def _say(node, text: str):
-    # Voz clara en español (Twilio Polly)
     node.say(text, language="es-ES", voice="Polly.Conchita")
 
 
 def _gather(clinic_slug: str, sid: int):
-    # Speech + teclado (DTMF), timeout cómodo
     return Gather(
         input="speech dtmf",
         language="es-ES",
@@ -69,24 +109,102 @@ def _gather(clinic_slug: str, sid: int):
 
 
 def _say_slots_with_pause(gather: Gather, prompt: str):
-    """
-    Mejora 1:
-    - Lee opciones una por una
-    - Indica explícitamente que marque en el teclado
-    """
     p = clean_tts(prompt)
     _say(gather, "Estos son los horarios disponibles.")
 
-    # Extrae opciones tipo: "1) 09:00"
     matches = re.findall(r"\b([1-5])\)\s*([0-2]?\d:\d{2})\b", p)
     if matches:
         for n, hhmm in matches:
             _say(gather, f"Opción {n}: {hhmm}.")
+            gather.pause(length=0.9)
     else:
-        # Fallback: si cambia el formato, lee el texto corto
         _say(gather, p)
 
     _say(gather, "Por favor, marca el número de tu opción en el teclado.")
+
+
+# =========================
+# NUEVO: /twilio/call-me
+# =========================
+class CallMeRequest(BaseModel):
+    name: str
+    phone: str
+    clinic_slug: str = "demo"
+
+
+def _normalize_phone_e164(phone: str) -> str:
+    """
+    Normaliza a formato E.164 básico:
+    - Debe comenzar con + y números
+    - Quita espacios/guiones/paréntesis
+    """
+    p = (phone or "").strip()
+    p = re.sub(r"[ \-\(\)]", "", p)
+    if not p.startswith("+"):
+        # si viene sin +, no adivinamos país: obligamos a +593...
+        raise ValueError("El teléfono debe incluir código de país, por ejemplo: +593...")
+    if not re.fullmatch(r"\+\d{8,15}", p):
+        raise ValueError("Formato de teléfono inválido. Usa +593XXXXXXXXX.")
+    return p
+
+
+def _get_public_base_url(request: Request) -> str:
+    """
+    Mejor práctica: setear PUBLIC_BASE_URL en Render.
+    Fallback: inferir desde request.base_url
+    """
+    env_url = os.getenv("PUBLIC_BASE_URL", "").strip()
+    if env_url:
+        return env_url.rstrip("/")
+    # fallback
+    return str(request.base_url).rstrip("/")
+
+
+@router.post("/twilio/call-me")
+async def twilio_call_me(payload: CallMeRequest, request: Request):
+    """
+    Dispara llamada OUTBOUND (Opción B: "Te llamamos") y conecta con /twilio/voice
+    """
+    # Validaciones mínimas
+    try:
+        to_phone = _normalize_phone_e164(payload.phone)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    clinic_slug = (payload.clinic_slug or "demo").strip() or "demo"
+
+    # Verifica que la clínica exista
+    db = SessionLocal()
+    try:
+        clinic = require_clinic(db, clinic_slug)
+    finally:
+        db.close()
+
+    # Credenciales Twilio
+    account_sid = getattr(settings, "TWILIO_ACCOUNT_SID", None) or os.getenv("TWILIO_ACCOUNT_SID")
+    auth_token = getattr(settings, "TWILIO_AUTH_TOKEN", None) or os.getenv("TWILIO_AUTH_TOKEN")
+    from_number = getattr(settings, "TWILIO_PHONE_NUMBER", None) or os.getenv("TWILIO_PHONE_NUMBER")
+
+    if not account_sid or not auth_token or not from_number:
+        raise HTTPException(
+            status_code=500,
+            detail="Faltan variables de Twilio (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER)."
+        )
+
+    base_url = _get_public_base_url(request)
+    twiml_url = f"{base_url}/twilio/voice?clinic={clinic_slug}"
+
+    try:
+        client = Client(account_sid, auth_token)
+        call = client.calls.create(
+            to=to_phone,
+            from_=from_number,
+            url=twiml_url,   # Twilio pedirá TwiML aquí
+            method="POST",
+        )
+        return {"ok": True, "call_sid": call.sid, "clinic_slug": clinic_slug}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error llamando con Twilio: {repr(e)}")
 
 
 @router.post("/twilio/voice")
@@ -101,10 +219,8 @@ async def twilio_voice(
     try:
         clinic = require_clinic(db, clinic_slug)
 
-        # Crea sesión en BD (id INT)
         sess = crud.create_voice_session(db, clinic_id=clinic.id)
 
-        # (opcional) guardar el CallSid en data_json para trazabilidad
         try:
             sess.data_json = {**(sess.data_json or {}), "twilio_call_sid": CallSid}
             db.commit()
@@ -113,17 +229,22 @@ async def twilio_voice(
 
         sid = sess.id
 
+        # ✅ IMPORTANTE: decimos el saludo FUERA del Gather (más confiable en llamadas reales)
+        _say(vr, "Hola, soy el asistente de la clínica.")
+        vr.pause(length=1)
+        _say(vr, "¿Cuál es tu nombre completo?")
+
+        # Gather solo para escuchar (speech + teclado)
         gather = _gather(clinic_slug, sid)
-        _say(gather, "Hola, soy el asistente de la clínica. ¿Cuál es tu nombre completo?")
         vr.append(gather)
 
-        # Fallback si no responde
+        # Fallback si no detecta voz/teclas
         _say(vr, "No te escuché. Intentemos otra vez.")
         vr.redirect(f"/twilio/voice?clinic={clinic_slug}", method="POST")
     finally:
         db.close()
 
-    return Response(content=str(vr), media_type="application/xml")
+    return Response(content=str(vr), media_type="text/xml")
 
 
 @router.post("/twilio/process")
@@ -140,13 +261,12 @@ async def twilio_process(
 
     vr = VoiceResponse()
 
-    # sid debe ser int
     try:
         sid = int(sid_raw)
     except Exception:
         _say(vr, "Se perdió la sesión. Volvamos a empezar.")
         vr.redirect(f"/twilio/voice?clinic={clinic_slug}", method="POST")
-        return Response(content=str(vr), media_type="application/xml")
+        return Response(content=str(vr), media_type="text/xml")
 
     if not text:
         gather = _gather(clinic_slug, sid)
@@ -155,7 +275,7 @@ async def twilio_process(
 
         _say(vr, "No te escuché. Intentemos otra vez.")
         vr.redirect(f"/twilio/voice?clinic={clinic_slug}", method="POST")
-        return Response(content=str(vr), media_type="application/xml")
+        return Response(content=str(vr), media_type="text/xml")
 
     db = SessionLocal()
     try:
@@ -195,22 +315,21 @@ async def twilio_process(
     done = bool((result or {}).get("done", False))
 
     if done:
-        _say(vr, clean_tts(prompt))
+        say_lines(vr, prompt, voice="Polly.Conchita", language="es-ES")
         vr.hangup()
-        return Response(content=str(vr), media_type="application/xml")
+        return Response(content=str(vr), media_type="text/xml")
 
     gather = _gather(clinic_slug, sid)
 
-    # ✅ Mejora 1 aplicada solo para el paso de horarios
     if "horarios disponibles" in (prompt or "").lower():
         _say_slots_with_pause(gather, prompt)
     else:
-        _say(gather, clean_tts(prompt))
+        # Para doctores/especialidad y otros listados: decir por líneas con pausas
+        say_lines(gather, prompt, voice="Polly.Conchita", language="es-ES")
 
     vr.append(gather)
 
-    # Fallback si no responde
     _say(vr, "Si prefieres, marca el número en el teclado. Intentemos otra vez.")
     vr.redirect(f"/twilio/voice?clinic={clinic_slug}", method="POST")
 
-    return Response(content=str(vr), media_type="application/xml")
+    return Response(content=str(vr), media_type="text/xml")
