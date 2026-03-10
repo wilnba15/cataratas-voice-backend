@@ -24,6 +24,10 @@ seed_data()  # <-- NUEVO
 app.include_router(voice_router)
 app.include_router(appointments_router)
 
+@app.get("/")
+def root():
+    return {"status": "ok"}
+
 @app.get("/health")
 def health():
     return {"status": "ok"}

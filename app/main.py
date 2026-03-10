@@ -3,6 +3,7 @@ from app.db import Base, engine
 import app.models
 from app.routers.voice import router as voice_router
 from app.routers.appointments import router as appointments_router
+from app.routers.whatsapp import router as whatsapp_router
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.seed import seed_data  # <-- NUEVO
@@ -19,10 +20,11 @@ app.add_middleware(
 
 Base.metadata.create_all(bind=engine)
 
-seed_data()  # <-- NUEVO
+# seed_data()  # <-- NUEVO
 
 app.include_router(voice_router)
 app.include_router(appointments_router)
+app.include_router(whatsapp_router)
 
 @app.get("/")
 def root():
