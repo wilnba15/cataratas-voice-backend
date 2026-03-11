@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.db import Base
@@ -9,10 +9,15 @@ import json
 
 class Clinic(Base):
     __tablename__ = "clinics"
+
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(200), nullable=False)
-    slug = Column(String(100), nullable=False, unique=True, index=True)  # ej: "clinica1"
-    active = Column(Integer, nullable=False, default=1)  # 1 activo / 0 inactivo
+    name = Column(String, nullable=False)
+    slug = Column(String, unique=True, index=True)
+    phone = Column(String)
+    address = Column(String)
+    logo_url = Column(String)
+    welcome_message = Column(String)
+    active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
