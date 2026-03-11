@@ -19,8 +19,7 @@ sessions = {}
 # Mapeo por número WhatsApp destino -> slug de clínica
 # Ajusta estos números reales según tu cuenta / sandbox / número asignado.
 WHATSAPP_NUMBER_TO_CLINIC = {
-    "whatsapp:+14155238886": "demo",           # Twilio Sandbox
-    "whatsapp:+593986138541": "clinica-valle", # ejemplo
+    "whatsapp:+14155238886": "clinica-valle",           # Twilio Sandbox
 }
 
 
