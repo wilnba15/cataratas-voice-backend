@@ -48,7 +48,7 @@ class AppointmentType(Base):
     __tablename__ = "appointment_types"
     id = Column(Integer, primary_key=True, index=True)
     clinic_id = Column(Integer, ForeignKey("clinics.id"), nullable=False, index=True)
-
+    name = Column(String(100), nullable=True)
     code = Column(String(20), nullable=False)
     duration_minutes = Column(Integer, nullable=False)
 
