@@ -27,18 +27,33 @@ def create_access_token(user: User, clinic: Clinic) -> str:
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
+def verify_password(plain_password: str, stored_password_hash: str) -> bool:
+    """
+    Temporalmente mantiene compatibilidad con el esquema actual.
+    Hoy compara texto plano.
+    Próximo paso: reemplazar por bcrypt/passlib.
+    """
+    return stored_password_hash == plain_password
+
+
 @router.post("/login", response_model=LoginResponse)
 def login(
     data: LoginRequest,
     db: Session = Depends(get_db),
     x_clinic_slug: str | None = Header(default=None),
 ):
-    if not x_clinic_slug:
+    clinic_slug = (x_clinic_slug or "").strip().lower()
+    email = data.email.strip().lower()
+
+    if not clinic_slug:
         raise HTTPException(status_code=400, detail="Falta header X-Clinic-Slug")
 
     clinic = (
         db.query(Clinic)
-        .filter(Clinic.slug == x_clinic_slug.strip().lower(), Clinic.active == True)
+        .filter(
+            Clinic.slug == clinic_slug,
+            Clinic.active.is_(True),
+        )
         .first()
     )
     if not clinic:
@@ -47,18 +62,16 @@ def login(
     user = (
         db.query(User)
         .filter(
-            User.email == data.email.strip().lower(),
+            User.email == email,
             User.clinic_id == clinic.id,
-            User.active == True,
+            User.active.is_(True),
         )
         .first()
     )
     if not user:
         raise HTTPException(status_code=401, detail="Credenciales inválidas")
 
-    # Por ahora comparación simple.
-    # Luego la cambiamos a password hash (bcrypt/passlib).
-    if user.password_hash != data.password:
+    if not verify_password(data.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Credenciales inválidas")
 
     token = create_access_token(user, clinic)

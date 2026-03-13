@@ -21,3 +21,8 @@ En Powershell
 cd C:\cataratas-voice
 .venv\Scripts\activate
 psql $env:DATABASE_URL
+
+
+
+https://siadvoice-panel.vercel.app/dashboard/appointments
+
