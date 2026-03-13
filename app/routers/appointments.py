@@ -17,7 +17,7 @@ JWT_ALGORITHM = "HS256"
 
 
 def get_current_auth(
-    authorization: str | None = Header(default=None),
+    authorization: str | None = Header(default=None, alias="Authorization"),
 ):
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Token requerido")
