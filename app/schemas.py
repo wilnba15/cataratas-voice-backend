@@ -29,3 +29,13 @@ class VoiceMessageResponse(BaseModel):
     session_id: int
     prompt: str
     done: bool = False
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class LoginResponse(BaseModel):
+    access_token: str
+    clinic_slug: str
+    role: str
