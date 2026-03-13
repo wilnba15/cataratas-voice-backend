@@ -8,6 +8,7 @@ from app.models import Clinic
 DEFAULT_CLINIC_SLUG = os.getenv("DEFAULT_CLINIC_SLUG", "demo")
 BASE_DOMAIN = os.getenv("BASE_DOMAIN", "")  # ej: "tudominio.com" (opcional)
 
+
 def _slug_from_host(host: str) -> str | None:
     """
     Extrae slug del host:
@@ -57,7 +58,14 @@ def get_clinic_slug(
 
 
 def require_clinic(db: Session, slug: str) -> Clinic:
-    clinic = db.query(Clinic).filter(Clinic.slug == slug, Clinic.active == 1).first()
+    clinic = (
+        db.query(Clinic)
+        .filter(Clinic.slug == slug, Clinic.active.is_(True))
+        .first()
+    )
     if not clinic:
-        raise HTTPException(status_code=404, detail=f"Clinic '{slug}' not found or inactive")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Clinic '{slug}' not found or inactive"
+        )
     return clinic
