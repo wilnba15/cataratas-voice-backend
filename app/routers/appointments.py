@@ -73,23 +73,45 @@ def list_appointments(
     if auth.get("clinic_id") != clinic.id:
         raise HTTPException(status_code=403, detail="No autorizado para esta clínica")
 
-    appointments = (
-        db.query(models.Appointment)
-        .filter(models.Appointment.clinic_id == clinic.id)
-        .order_by(desc(models.Appointment.start_time))
-        .all()
-    )
+    try:
+        appointments = (
+            db.query(models.Appointment)
+            .filter(models.Appointment.clinic_id == clinic.id)
+            .order_by(desc(models.Appointment.start_time))
+            .all()
+        )
 
-    results = []
+        results = []
 
-    for appt in appointments:
-        results.append({
-            "id": appt.id,
-            "patient_name": appt.patient.full_name if appt.patient else "",
-            "patient_phone": appt.patient.phone if appt.patient else "",
-            "date": appt.start_time.strftime("%Y-%m-%d"),
-            "time": appt.start_time.strftime("%H:%M"),
-            "status": appt.status
-        })
+        for appt in appointments:
+            patient_name = ""
+            patient_phone = ""
 
-    return results
+            if appt.patient:
+                patient_name = appt.patient.full_name or ""
+                patient_phone = appt.patient.phone or ""
+
+            appt_date = ""
+            appt_time = ""
+
+            if appt.start_time:
+                appt_date = appt.start_time.strftime("%Y-%m-%d")
+                appt_time = appt.start_time.strftime("%H:%M")
+
+            results.append({
+                "id": appt.id,
+                "patient_name": patient_name,
+                "patient_phone": patient_phone,
+                "date": appt_date,
+                "time": appt_time,
+                "status": appt.status or "",
+            })
+
+        return results
+
+    except Exception as e:
+        print("ERROR /appointments:", str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error interno en appointments: {str(e)}"
+        )
