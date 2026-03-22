@@ -31,6 +31,31 @@ def get_current_auth(
         raise HTTPException(status_code=401, detail="Token inválido")
 
 
+def serialize_appointment(appt: models.Appointment):
+    patient_name = ""
+    patient_phone = ""
+
+    if appt.patient:
+        patient_name = appt.patient.full_name or ""
+        patient_phone = appt.patient.phone or ""
+
+    appt_date = ""
+    appt_time = ""
+
+    if appt.start_time:
+        appt_date = appt.start_time.strftime("%Y-%m-%d")
+        appt_time = appt.start_time.strftime("%H:%M")
+
+    return {
+        "id": appt.id,
+        "patient_name": patient_name,
+        "patient_phone": patient_phone,
+        "date": appt_date,
+        "time": appt_time,
+        "status": appt.status or "",
+    }
+
+
 @router.post("", response_model=AppointmentOut)
 def create(
     appt: AppointmentCreate,
@@ -81,33 +106,7 @@ def list_appointments(
             .all()
         )
 
-        results = []
-
-        for appt in appointments:
-            patient_name = ""
-            patient_phone = ""
-
-            if appt.patient:
-                patient_name = appt.patient.full_name or ""
-                patient_phone = appt.patient.phone or ""
-
-            appt_date = ""
-            appt_time = ""
-
-            if appt.start_time:
-                appt_date = appt.start_time.strftime("%Y-%m-%d")
-                appt_time = appt.start_time.strftime("%H:%M")
-
-            results.append({
-                "id": appt.id,
-                "patient_name": patient_name,
-                "patient_phone": patient_phone,
-                "date": appt_date,
-                "time": appt_time,
-                "status": appt.status or "",
-            })
-
-        return results
+        return [serialize_appointment(appt) for appt in appointments]
 
     except Exception as e:
         print("ERROR /appointments:", str(e))
@@ -115,3 +114,37 @@ def list_appointments(
             status_code=500,
             detail=f"Error interno en appointments: {str(e)}"
         )
+
+
+@router.patch("/{appointment_id}/cancel")
+def cancel_appointment(
+    appointment_id: int,
+    db: Session = Depends(get_db),
+    x_clinic_slug: str | None = Header(default=None),
+    auth=Depends(get_current_auth),
+):
+    if not x_clinic_slug:
+        raise HTTPException(status_code=400, detail="Falta header X-Clinic-Slug")
+
+    clinic = require_clinic(db, x_clinic_slug)
+
+    if auth.get("clinic_id") != clinic.id:
+        raise HTTPException(status_code=403, detail="No autorizado para esta clínica")
+
+    appointment = (
+        db.query(models.Appointment)
+        .filter(
+            models.Appointment.id == appointment_id,
+            models.Appointment.clinic_id == clinic.id,
+        )
+        .first()
+    )
+
+    if not appointment:
+        raise HTTPException(status_code=404, detail="Cita no encontrada")
+
+    appointment.status = "canceled"
+    db.commit()
+    db.refresh(appointment)
+
+    return serialize_appointment(appointment)
