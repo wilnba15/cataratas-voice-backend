@@ -109,3 +109,22 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     clinic = relationship("Clinic")
+
+class MedicalRecord(Base):
+    __tablename__ = "medical_records"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    clinic_id = Column(Integer, ForeignKey("clinics.id"), nullable=False, index=True)
+    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False, index=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    motivo_consulta = Column(Text, nullable=True)
+    antecedentes = Column(Text, nullable=True)
+    diagnostico = Column(Text, nullable=True)
+    observaciones = Column(Text, nullable=True)
+
+    clinic = relationship("Clinic")
+    patient = relationship("Patient")
