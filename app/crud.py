@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session
 from datetime import timedelta
-from app.models import Patient, Appointment, AppointmentType
+from app.models import Patient, Appointment, AppointmentType, MedicalRecord
+
 
 def get_or_create_patient(db: Session, clinic_id: int, full_name: str, phone: str):
     p = (
@@ -8,16 +9,55 @@ def get_or_create_patient(db: Session, clinic_id: int, full_name: str, phone: st
         .filter(Patient.phone == phone, Patient.clinic_id == clinic_id)
         .first()
     )
+
     if p:
+        # actualizar nombre si cambia
         p.full_name = full_name
         db.commit()
         db.refresh(p)
+
+        # 🔥 NUEVO: verificar historia clínica
+        record = (
+            db.query(MedicalRecord)
+            .filter(
+                MedicalRecord.patient_id == p.id,
+                MedicalRecord.clinic_id == clinic_id,
+            )
+            .first()
+        )
+
+        if not record:
+            record = MedicalRecord(
+                clinic_id=clinic_id,
+                patient_id=p.id,
+                motivo_consulta="Creado automáticamente",
+                antecedentes="",
+                diagnostico="",
+                observaciones="Registro automático desde sistema",
+            )
+            db.add(record)
+            db.commit()
+
         return p
 
+    # crear paciente nuevo
     p = Patient(clinic_id=clinic_id, full_name=full_name, phone=phone)
     db.add(p)
     db.commit()
     db.refresh(p)
+
+    # 🔥 NUEVO: crear historia clínica automática
+    record = MedicalRecord(
+        clinic_id=clinic_id,
+        patient_id=p.id,
+        motivo_consulta="Creado automáticamente",
+        antecedentes="",
+        diagnostico="",
+        observaciones="Registro automático desde sistema",
+    )
+    db.add(record)
+    db.commit()
+
     return p
 
 
