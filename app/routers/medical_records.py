@@ -36,6 +36,17 @@ class MedicalRecordOut(BaseModel):
     observaciones: str | None = None
 
 
+class MedicalRecordListItem(BaseModel):
+    id: int
+    clinic_id: int
+    patient_id: int
+    patient_name: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    motivo_consulta: str | None = None
+    diagnostico: str | None = None
+
+
 def get_current_auth(
     authorization: str | None = Header(default=None, alias="Authorization"),
 ):
@@ -73,6 +84,23 @@ def serialize_medical_record(record: models.MedicalRecord):
         "antecedentes": record.antecedentes,
         "diagnostico": record.diagnostico,
         "observaciones": record.observaciones,
+    }
+
+
+def serialize_medical_record_list_item(record: models.MedicalRecord):
+    patient_name = ""
+    if getattr(record, "patient", None):
+        patient_name = record.patient.full_name or ""
+
+    return {
+        "id": record.id,
+        "clinic_id": record.clinic_id,
+        "patient_id": record.patient_id,
+        "patient_name": patient_name,
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
+        "motivo_consulta": record.motivo_consulta,
+        "diagnostico": record.diagnostico,
     }
 
 
@@ -126,6 +154,24 @@ def create_medical_record(
     db.refresh(record)
 
     return record
+
+
+@router.get("", response_model=list[MedicalRecordListItem])
+def list_medical_records(
+    db: Session = Depends(get_db),
+    x_clinic_slug: str | None = Header(default=None),
+    auth=Depends(get_current_auth),
+):
+    clinic = ensure_clinic_access(db, x_clinic_slug, auth)
+
+    records = (
+        db.query(models.MedicalRecord)
+        .filter(models.MedicalRecord.clinic_id == clinic.id)
+        .order_by(models.MedicalRecord.id.desc())
+        .all()
+    )
+
+    return [serialize_medical_record_list_item(record) for record in records]
 
 
 @router.get("/patient/{patient_id}", response_model=MedicalRecordOut)
