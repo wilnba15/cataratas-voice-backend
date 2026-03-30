@@ -196,3 +196,12 @@ def get_medical_record_by_patient(
         raise HTTPException(status_code=404, detail="Historia clínica no encontrada")
 
     return record
+
+@router.get("/medical-records/{id}")
+def get_medical_record(id: int, db: Session = Depends(get_db)):
+    record = db.query(MedicalRecord).filter(MedicalRecord.id == id).first()
+
+    if not record:
+        raise HTTPException(status_code=404, detail="No encontrado")
+
+    return record
