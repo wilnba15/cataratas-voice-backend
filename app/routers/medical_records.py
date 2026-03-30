@@ -24,6 +24,13 @@ class MedicalRecordCreate(BaseModel):
     observaciones: str | None = None
 
 
+class MedicalRecordUpdate(BaseModel):
+    motivo_consulta: str | None = None
+    antecedentes: str | None = None
+    diagnostico: str | None = None
+    observaciones: str | None = None
+
+
 class MedicalRecordOut(BaseModel):
     id: int
     clinic_id: int
@@ -197,6 +204,7 @@ def get_medical_record_by_patient(
 
     return record
 
+
 @router.get("/{id}")
 def get_medical_record(
     id: int,
@@ -234,7 +242,63 @@ def get_medical_record(
         "patient_name": patient.full_name if patient else None,
         "patient_phone": patient.phone if patient else None,
         "created_at": record.created_at,
+        "updated_at": record.updated_at,
         "motivo_consulta": record.motivo_consulta,
+        "antecedentes": record.antecedentes,
+        "diagnostico": record.diagnostico,
+        "observaciones": record.observaciones,
+    }
+
+
+@router.put("/{id}")
+def update_medical_record(
+    id: int,
+    payload: MedicalRecordUpdate,
+    db: Session = Depends(get_db),
+    x_clinic_slug: str | None = Header(default=None),
+    auth=Depends(get_current_auth),
+):
+    clinic = ensure_clinic_access(db, x_clinic_slug, auth)
+
+    record = (
+        db.query(models.MedicalRecord)
+        .filter(
+            models.MedicalRecord.id == id,
+            models.MedicalRecord.clinic_id == clinic.id,
+        )
+        .first()
+    )
+
+    if not record:
+        raise HTTPException(status_code=404, detail="Historia clínica no encontrada")
+
+    record.motivo_consulta = payload.motivo_consulta
+    record.antecedentes = payload.antecedentes
+    record.diagnostico = payload.diagnostico
+    record.observaciones = payload.observaciones
+
+    db.commit()
+    db.refresh(record)
+
+    patient = (
+        db.query(models.Patient)
+        .filter(
+            models.Patient.id == record.patient_id,
+            models.Patient.clinic_id == clinic.id,
+        )
+        .first()
+    )
+
+    return {
+        "id": record.id,
+        "clinic_id": record.clinic_id,
+        "patient_id": record.patient_id,
+        "patient_name": patient.full_name if patient else None,
+        "patient_phone": patient.phone if patient else None,
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
+        "motivo_consulta": record.motivo_consulta,
+        "antecedentes": record.antecedentes,
         "diagnostico": record.diagnostico,
         "observaciones": record.observaciones,
     }
