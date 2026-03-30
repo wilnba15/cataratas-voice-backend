@@ -197,11 +197,44 @@ def get_medical_record_by_patient(
 
     return record
 
-@router.get("/medical-records/{id}")
-def get_medical_record(id: int, db: Session = Depends(get_db)):
-    record = db.query(MedicalRecord).filter(MedicalRecord.id == id).first()
+@router.get("/{id}")
+def get_medical_record(
+    id: int,
+    db: Session = Depends(get_db),
+    x_clinic_slug: str | None = Header(default=None),
+    auth=Depends(get_current_auth),
+):
+    clinic = ensure_clinic_access(db, x_clinic_slug, auth)
+
+    record = (
+        db.query(models.MedicalRecord)
+        .filter(
+            models.MedicalRecord.id == id,
+            models.MedicalRecord.clinic_id == clinic.id,
+        )
+        .first()
+    )
 
     if not record:
-        raise HTTPException(status_code=404, detail="No encontrado")
+        raise HTTPException(status_code=404, detail="Historia clínica no encontrada")
 
-    return record
+    patient = (
+        db.query(models.Patient)
+        .filter(
+            models.Patient.id == record.patient_id,
+            models.Patient.clinic_id == clinic.id,
+        )
+        .first()
+    )
+
+    return {
+        "id": record.id,
+        "clinic_id": record.clinic_id,
+        "patient_id": record.patient_id,
+        "patient_name": patient.full_name if patient else None,
+        "patient_phone": patient.phone if patient else None,
+        "created_at": record.created_at,
+        "motivo_consulta": record.motivo_consulta,
+        "diagnostico": record.diagnostico,
+        "observaciones": record.observaciones,
+    }
