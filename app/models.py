@@ -33,6 +33,7 @@ class Patient(Base):
     clinic = relationship("Clinic")
 
     appointments = relationship("Appointment", back_populates="patient")
+    medical_evolutions = relationship("MedicalEvolution", back_populates="patient")
 
 class Provider(Base):
     __tablename__ = "providers"
@@ -128,3 +129,44 @@ class MedicalRecord(Base):
 
     clinic = relationship("Clinic")
     patient = relationship("Patient")
+
+class MedicalEvolution(Base):
+    __tablename__ = "medical_evolutions"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    clinic_id = Column(Integer, ForeignKey("clinics.id"), nullable=False, index=True)
+    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False, index=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    evolution_datetime = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    professional_name = Column(String(150), nullable=False)
+    professional_role = Column(String(100), nullable=True)
+
+    attention_type = Column(String(50), nullable=True)
+
+    subjective = Column(Text, nullable=True)
+    objective = Column(Text, nullable=True)
+    assessment = Column(Text, nullable=True)
+    plan = Column(Text, nullable=True)
+
+    blood_pressure = Column(String(20), nullable=True)
+    heart_rate = Column(String(20), nullable=True)
+    respiratory_rate = Column(String(20), nullable=True)
+    temperature = Column(String(20), nullable=True)
+    oxygen_saturation = Column(String(20), nullable=True)
+    weight = Column(String(20), nullable=True)
+    glucose = Column(String(20), nullable=True)
+    pain_scale = Column(String(20), nullable=True)
+
+    diagnosis = Column(Text, nullable=True)
+    indications = Column(Text, nullable=True)
+    clinical_alerts = Column(Text, nullable=True)
+    next_review_date = Column(DateTime, nullable=True)
+
+    status = Column(String(30), nullable=False, default="draft")
+
+    clinic = relationship("Clinic")
+    patient = relationship("Patient", back_populates="medical_evolutions")

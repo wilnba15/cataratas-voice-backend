@@ -8,6 +8,7 @@ from app.routers.whatsapp import router as whatsapp_router
 from fastapi.middleware.cors import CORSMiddleware
 from app.routers.auth import router as auth_router
 from app.routers.medical_records import router as medical_records_router
+from app.routers.medical_evolutions import router as medical_evolutions_router
 
 from app.seed import seed_data  # <-- NUEVO
 
@@ -30,6 +31,7 @@ app.include_router(appointments_router)
 app.include_router(whatsapp_router)
 app.include_router(auth_router)
 app.include_router(medical_records_router)
+app.include_router(medical_evolutions_router)
 
 @app.get("/")
 def root():
